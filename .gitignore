@@ -1,0 +1,19 @@
+# Python & Environment
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data and Models
+data/*.db
+data/*.joblib
+data/*.csv
+!data/.gitkeep
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
