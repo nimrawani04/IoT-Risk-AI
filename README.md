@@ -1,847 +1,258 @@
 # AI-Based Behavioural Vulnerability Assessment and Risk Prediction for IoT Devices
 
-An open-source research and engineering framework for **cross-layer IoT behavioural anomaly detection and evidence-based risk assessment**.
+An open-source **research and engineering framework** for detecting unusual IoT behaviour by correlating physical sensor telemetry with network communication activity. The framework combines Arduino sensor nodes, MQTT monitoring, edge-based machine learning, and evidence-based risk assessment.
 
-This project moves beyond conventional sensor thresholding by analysing correlated temporal patterns across device-level physical sensor readings and network-level communication behaviours, including timing jitter, replay attacks, message flooding, and unauthorised publisher identities.
-
-The proposed framework integrates physical IoT devices, network traffic monitoring, machine learning, and explainable risk assessment into a unified monitoring system.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Research Context and Questions](#research-context-and-questions)
-- [Key Features](#key-features)
-- [System Architecture](#system-architecture)
-- [Hardware Requirements](#hardware-requirements)
-- [Hardware Connections](#hardware-connections)
-- [Software Architecture](#software-architecture)
-- [Repository Structure](#repository-structure)
-- [Installation](#installation)
-- [Hardware Setup](#hardware-setup)
-- [Running the System](#running-the-system)
-- [Simulation and Mock Mode](#simulation-and-mock-mode)
-- [Controlled Experiments](#controlled-experiments)
-- [Machine Learning Methodology](#machine-learning-methodology)
-- [Evidence-Based Risk Assessment](#evidence-based-risk-assessment)
-- [Evaluation Metrics](#evaluation-metrics)
-- [Research Limitations](#research-limitations)
-- [Future Work](#future-work)
-- [Contributing](#contributing)
-- [License](#license)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Arduino](https://img.shields.io/badge/Arduino-Uno-00979D?logo=arduino&logoColor=white)](https://www.arduino.cc/)
+[![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-5-C51A4A?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+[![MQTT](https://img.shields.io/badge/MQTT-Mosquitto-660066)](https://mosquitto.org/)
+[![Scikit-learn](https://img.shields.io/badge/ML-Scikit--learn-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
+[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 
 ---
 
 ## Overview
 
-Internet of Things (IoT) devices are increasingly deployed in smart homes, healthcare systems, industrial environments, and smart infrastructure.
+Traditional IoT monitoring often examines sensor readings or network traffic independently. Similar observations—such as repeated sensor values—may result from a physical fault, replayed messages, or a compromised device. This project combines both layers to provide more context for anomaly detection and risk interpretation.
 
-Traditional IoT monitoring systems commonly rely on predefined thresholds applied to individual sensor readings. Although these methods can identify certain physical abnormalities, they may fail to distinguish between sensor malfunctions, communication failures, and malicious network activities.
+The framework is designed for controlled research experiments and reproducible evaluation. It is not a certified safety system or a production-ready intrusion-prevention solution.
 
-For example, an environmental sensor reporting an identical value repeatedly could indicate:
+## Proposed Solution
 
-- A physically stuck sensor.
-- A disconnected or malfunctioning sensor interface.
-- Replayed historical sensor messages.
-- A compromised IoT node transmitting fabricated readings.
+The system collects physical sensor telemetry and MQTT communication data, aggregates observations into time windows, and extracts sensor, network, and cross-layer features. An unsupervised **Isolation Forest** detects behavioural deviations from a learned baseline. An evidence-based risk engine then maps observed behaviour to interpretable risk levels, displayed through a Streamlit dashboard.
 
-These scenarios may produce similar sensor-level observations but require different responses.
+## Research Questions
 
-This project proposes a cross-layer behavioural assessment framework that combines physical sensor telemetry with network communication evidence to improve anomaly detection and risk interpretation.
-
-### Proposed Solution
-
-The framework integrates:
-
-1. Physical sensor monitoring using Arduino-based IoT nodes.
-2. Network communication monitoring using MQTT.
-3. Temporal and statistical feature extraction.
-4. Machine learning-based anomaly detection using Isolation Forest.
-5. Evidence-based risk assessment.
-6. Real-time monitoring and visualisation using Streamlit.
-
-The system is designed as an open-source research platform for controlled experimentation, reproducible evaluation, and further development of IoT security mechanisms.
-
----
-
-## Research Context and Questions
-
-### Research Hypothesis
-
-> A cross-layer detector utilising correlated device sensor features and network communication evidence can distinguish controlled attack-like scenarios from ordinary sensor faults more accurately than a detector using sensor readings alone.
-
-The hypothesis will be evaluated experimentally using controlled scenarios with known ground-truth labels.
-
-### Research Questions
-
-**RQ1: Cross-Layer Detection**
-
-Does adding network communication features improve anomaly detection performance compared with sensor-only models?
-
-**RQ2: Fault and Attack Differentiation**
-
-Can the proposed system reliably distinguish physical sensor malfunctions, such as stuck ADC readings and disconnected sensors, from network attack scenarios, such as replay, denial-of-service flooding, and rogue publishers?
-
-**RQ3: Explainable Risk Assessment**
-
-Does an evidence-based risk score provide more transparent and interpretable alerts than an isolated machine learning anomaly score?
-
-### Research Objectives
-
-- Develop a low-cost IoT monitoring framework using accessible hardware.
-- Collect synchronised physical and network-level observations.
-- Extract temporal and statistical features from sensor and MQTT data.
-- Evaluate sensor-only, network-only, and cross-layer detection approaches.
-- Design a transparent risk assessment mechanism based on observable evidence.
-- Provide reproducible experiments and an open-source implementation.
-
----
+- **RQ1 — Cross-layer detection:** Does combining physical and network features improve detection compared with sensor-only or network-only monitoring?
+- **RQ2 — Fault and attack differentiation:** Can the system distinguish physical sensor faults, such as stuck or dropped readings, from attack-like network behaviour, such as replay, flooding, and rogue publishers?
+- **RQ3 — Explainable risk assessment:** Can an evidence-based risk score provide more transparent and actionable alerts than an anomaly score alone?
 
 ## Key Features
 
-| Feature | Description |
+- Multi-node Arduino sensor monitoring.
+- MQTT message-rate, timing, payload, and publisher-behaviour monitoring.
+- Cross-layer feature extraction using sliding time windows.
+- Unsupervised Isolation Forest anomaly detection.
+- Evidence-based risk scoring and alert interpretation.
+- Streamlit dashboard for monitoring and visualisation.
+- Controlled fault and attack-like scenario evaluation.
+
+## Tools & Technologies
+
+| Tool / Technology | Purpose |
 |---|---|
-| Multi-node monitoring | Collects data from multiple Arduino-based IoT nodes. |
-| Physical sensor monitoring | Monitors motion, button events, gas sensor readings, and distance measurements. |
-| Network monitoring | Observes MQTT message timing, message rates, publisher identities, and repeated payloads. |
-| Cross-layer analysis | Combines physical telemetry and network communication features. |
-| Anomaly detection | Uses Isolation Forest as an unsupervised baseline detector. |
-| Risk assessment | Combines anomaly scores and observable evidence into interpretable risk indicators. |
-| Simulation | Supports controlled scenarios without physical hardware. |
-| Visualisation | Provides a Streamlit dashboard for monitoring and analysis. |
-| Reproducible experiments | Generates labelled datasets and evaluates competing detection approaches. |
+| **Python** | Data collection, processing, risk engine, and experiments |
+| **NumPy & Pandas** | Numerical operations and feature processing |
+| **scikit-learn** | Isolation Forest and evaluation metrics |
+| **Arduino C++ / Arduino IDE** | Firmware for sensor nodes |
+| **Mosquitto & Paho MQTT** | MQTT broker and communication monitoring |
+| **pySerial** | USB-serial communication with Arduino |
+| **SQLite** | Local telemetry and experiment storage |
+| **Streamlit & Plotly** | Dashboard and visualisations |
 
 ---
 
 ## System Architecture
 
-The system consists of physical IoT nodes, a central processing platform, a data storage layer, a machine learning pipeline, and a visualisation interface.
-
-### Architecture Diagram
+The framework is organised into physical sensing, communication, edge processing, and visualisation components.
 
 ```mermaid
 flowchart TD
-    subgraph PHYSICAL["Physical IoT Nodes"]
-        A1["Arduino Uno 1<br/>PIR Motion and Push Button"]
-        A2["Arduino Uno 2<br/>MQ-4 Gas and HC-SR04"]
-        H1["Optional Heltec Wi-Fi Node"]
+    subgraph DEV["Physical IoT Layer"]
+      A["Arduino Uno 1<br/>PIR Motion + Push Button"]
+      B["Arduino Uno 2<br/>MQ-4 Gas + HC-SR04"]
+      H["Optional Heltec Wi-Fi/LoRa Node"]
     end
 
     subgraph COMM["Communication Layer"]
-        SER["USB Serial Communication"]
-        BRK["MQTT Broker"]
+      S["USB Serial"]
+      M["Mosquitto MQTT Broker"]
     end
 
-    subgraph PROCESS["Central Processing - Raspberry Pi 5 or Host PC"]
-        COL["Serial Collector"]
-        NET["MQTT Network Monitor"]
-        DB[("SQLite Database")]
-        FEAT["Cross-Layer Feature Extraction"]
-        DET["Isolation Forest Detector"]
-        RISK["Evidence-Based Risk Engine"]
-        DASH["Streamlit Dashboard"]
+    subgraph EDGE["Edge Processing — Raspberry Pi 5 / Host PC"]
+      C["Serial Collector + MQTT Monitor"]
+      D[("SQLite Storage")]
+      F["Windowing & Cross-Layer Features"]
+      I["Isolation Forest Detector"]
+      R["Evidence-Based Risk Engine"]
+      V["Streamlit Dashboard"]
     end
 
-    A1 --> SER
-    A2 --> SER
-    SER --> COL
-
-    H1 -->|"MQTT over Wi-Fi"| BRK
-    BRK --> NET
-
-    COL --> DB
-    NET --> DB
-
-    DB --> FEAT
-    FEAT --> DET
-    DET --> RISK
-    RISK --> DASH
+    A --> S --> C
+    B --> S
+    H --> M
+    M --> C
+    C --> D --> F --> I --> R --> V
 ```
+
+### Architecture Overview
+
+1. **Physical layer:** Arduino nodes collect motion, button, gas-sensor, and distance readings.
+2. **Communication layer:** Arduino telemetry is sent over USB serial. An optional wireless endpoint can publish telemetry through MQTT.
+3. **Collection and storage:** Python collectors timestamp and record serial and MQTT observations in the local data store.
+4. **Feature extraction:** The pipeline aggregates observations into time windows and computes physical, network, and cross-layer features.
+5. **Detection and risk:** Isolation Forest scores behavioural deviations; the risk engine combines detector output with observable evidence.
+6. **Visualisation:** The dashboard displays telemetry, network activity, anomaly indicators, and risk alerts.
 
 ### Data Processing Pipeline
 
 ```mermaid
-flowchart TD
-    A["Raw Sensor and Network Data"]
-    B["Data Validation and Timestamping"]
-    C["Window-Based Aggregation"]
-    D["Sensor Feature Extraction"]
-    E["Network Feature Extraction"]
-    F["Feature Normalisation"]
-    G["Anomaly Detection"]
-    H["Evidence Collection"]
-    I["Risk Assessment"]
-    J["Dashboard Alert"]
-
-    A --> B
-    B --> C
-    C --> D
-    C --> E
-    D --> F
+flowchart LR
+    A["Sensor + MQTT Data"] --> B["Validate & Timestamp"]
+    B --> C["10-second Windows<br/>2-second Step"]
+    C --> D["Extract Sensor Features"]
+    C --> E["Extract Network Features"]
+    D --> F["Combine / Normalise"]
     E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J
+    F --> G["Isolation Forest"]
+    G --> H["Collect Supporting Evidence"]
+    H --> I["Risk Assessment"]
+    I --> J["Dashboard Alert"]
 ```
 
-### Architecture Explanation
+The 10-second window with a 2-second step allows successive feature windows to overlap, preserving short-term behavioural changes for analysis.
 
-**1. Physical Layer**
+## Feature Groups
 
-Arduino devices collect sensor readings and events from the physical environment.
+| Feature group | Examples |
+|---|---|
+| **Physical sensor features** | MQ-4 mean and variance, mean distance, motion-event count, sensor read-error and dropout indicators |
+| **Network features** | MQTT message rate, payload size, inter-arrival-time jitter, duplicate/replay count, unexpected publisher indicator |
+| **Cross-layer features** | Sensor update rate compared with message rate; repeated readings during unusual traffic; missing sensor updates associated with communication changes |
 
-**2. Communication Layer**
+Repeated values alone do not prove an attack. The system considers their timing and relationship with other physical and network observations.
 
-Arduino data is transmitted through USB serial communication. The optional Wi-Fi node publishes messages to an MQTT broker.
+---
 
-**3. Data Collection Layer**
+## Proposed Risk Scoring
 
-Python-based collectors receive sensor telemetry and MQTT messages, attach timestamps, validate data, and store records.
+The research paper proposes a likelihood-and-consequence risk matrix:
 
-**4. Feature Extraction Layer**
+\[
+\boxed{R=L\times C}
+\]
 
-The framework computes window-based statistical and behavioural features from physical and network observations.
+- \(R\): Composite risk score.
+- \(L\): Runtime anomaly likelihood level, from 1 (low) to 3 (high).
+- \(C\): Asset consequence weight, from 1 (low) to 3 (high).
 
-**5. Detection Layer**
+### Anomaly likelihood levels
 
-Isolation Forest identifies unusual behavioural patterns based on the extracted feature representation.
+| Likelihood | Isolation Forest anomaly score \(A\) |
+|---|---:|
+| Low (\(L=1\)) | \(A < 0.50\) |
+| Medium (\(L=2\)) | \(0.50 \leq A < 0.75\) |
+| High (\(L=3\)) | \(A \geq 0.75\) |
 
-**6. Risk Assessment Layer**
+### Risk scoring matrix (\(R=L\times C\))
 
-The risk engine combines anomaly scores with observable evidence to generate interpretable alerts.
+| Likelihood | Low impact (\(C=1\)) | Medium impact (\(C=2\)) | High impact (\(C=3\)) |
+|---|---:|---:|---:|
+| **High (\(L=3\))** | 3 — Medium | 6 — High | **9 — Critical** |
+| **Medium (\(L=2\))** | 2 — Low | 4 — Medium | 6 — High |
+| **Low (\(L=1\))** | 1 — Low | 2 — Low | 3 — Medium |
 
-**7. Visualisation Layer**
+Asset consequence weights in the paper: PIR motion/access sensor = 1; distance/proximity sensor = 2; MQ-4 gas sensor or safety-related relay = 3.
 
-The Streamlit dashboard displays sensor readings, network activity, anomalies, and risk indicators.
+In the reported experiment, when a critical risk score (\(R=9\)) was triggered, the action dispatcher issued Mosquitto client disconnection commands within **45 ms**. This is a reported test result, not a guaranteed response time for every deployment.
 
 ---
 
 ## Hardware Requirements
 
-The following components form the proposed experimental setup.
-
 | Component | Quantity | Purpose |
 |---|---:|---|
-| Arduino Uno | 2 | Physical sensor data collection |
-| PIR motion sensor | 1 | Motion detection |
-| Push button | 1 | Manual event generation |
-| MQ-4 gas sensor module | 1 | Raw gas sensor measurements |
-| HC-SR04 ultrasonic sensor | 1 | Distance measurements |
-| Raspberry Pi 5 or host PC | 1 | Central processing and monitoring |
-| USB cables | 2 | Serial communication |
+| Raspberry Pi 5 (4 GB) or compatible host PC | 1 | Runs data collection, storage, feature extraction, ML, risk engine, and dashboard |
+| Arduino Uno R3 | 2 | Physical sensor data acquisition |
+| PIR motion sensor | 1 | Motion/event detection |
+| Push button | 1 | Manual event input |
+| MQ-4 gas sensor module | 1 | Relative gas-sensor readings for experiments |
+| HC-SR04 ultrasonic sensor | 1 | Distance/proximity measurements |
+| USB cables | 2 | Connect Arduino boards to the gateway |
 | Breadboard and jumper wires | As required | Circuit connections |
-| Heltec Wi-Fi development board | Optional | MQTT communication experiments |
+| Heltec Wi-Fi/LoRa board | Optional | Wireless MQTT telemetry experiments |
 
-The Heltec node is optional. The core physical sensing pipeline can operate using the two Arduino boards and a Raspberry Pi or compatible host computer.
-
----
+**Safety note:** The MQ-4 module is uncalibrated in this setup and is used for relative anomaly experiments only. It is not a certified gas detector and must not be relied upon for life-safety monitoring.
 
 ## Hardware Connections
 
-### Arduino Uno 1: Event and Access Node
+### Arduino Uno 1 — Event Node
 
-This node monitors motion and button events.
-
-| Component | Arduino Pin |
+| Component | Arduino pin |
 |---|---|
 | PIR OUT | D8 |
-| Push button | D2 |
-| PIR VCC | 5V, subject to module specifications |
-| PIR GND | GND |
-| Push button terminals | D2 and GND |
+| Push button | D2 and GND (using `INPUT_PULLUP`) |
+| PIR VCC / GND | As specified by the module / GND |
 
-The button can use the Arduino internal pull-up resistor.
+### Arduino Uno 2 — Environmental Node
 
-When using `INPUT_PULLUP`, the button reads LOW when pressed and HIGH when released.
-
-### Arduino Uno 2: Environmental Monitoring Node
-
-This node measures gas sensor output and distance.
-
-| Component | Arduino Pin |
+| Component | Arduino pin |
 |---|---|
 | MQ-4 Analog Output | A0 |
 | HC-SR04 Trigger | D3 |
 | HC-SR04 Echo | D4 |
-| MQ-4 VCC | As specified by module |
-| MQ-4 GND | GND |
-| HC-SR04 VCC | 5V |
-| HC-SR04 GND | GND |
+| Sensor power and ground | Follow module specifications; connect grounds appropriately |
 
-**Important:** The MQ-4 module may require substantial warm-up time and appropriate calibration. Its raw ADC values must not be interpreted as calibrated gas concentrations.
-
-The HC-SR04 Echo output is typically 5V. Use an appropriate voltage divider or level shifter when connecting it to a 3.3V-only input.
+**Electrical note:** HC-SR04 Echo is typically a 5V signal. Use a suitable level shifter or voltage divider when connecting it to a 3.3V-only input. Check the specifications of each module before wiring.
 
 ---
 
-## Software Architecture
-
-The central software is implemented in Python.
-
-| Component | Technology | Responsibility |
-|---|---|---|
-| Firmware | Arduino C++ | Sensor acquisition and serial output |
-| Serial collector | Python and pySerial | Collect data from Arduino nodes |
-| MQTT monitor | Paho MQTT | Observe communication behaviour |
-| Storage | SQLite | Persist telemetry and experiment records |
-| Feature extraction | Python, NumPy, Pandas | Generate statistical and temporal features |
-| Anomaly detection | Scikit-learn | Train and execute Isolation Forest |
-| Risk engine | Python | Convert detection evidence into risk indicators |
-| Dashboard | Streamlit | Visualise monitoring results |
-| Experiments | Python | Generate scenarios and benchmark models |
-
----
-
-## Repository Structure
+## Repository Modules
 
 ```text
-iot-behavioural-risk-assessment/
-│
-├── arduino/
-│   ├── node1_events/
-│   │   └── node1_events.ino
-│   │
-│   └── node2_sensors/
-│       └── node2_sensors.ino
-│
-├── pi/
-│   ├── collector.py
-│   ├── mqtt_monitor.py
-│   ├── features.py
-│   ├── detector.py
-│   ├── risk.py
-│   └── dashboard.py
-│
-├── experiments/
-│   ├── generate_test_data.py
-│   └── evaluate.py
-│
-├── data/
-│   └── .gitkeep
-│
-├── requirements.txt
-├── .gitignore
-└── README.md
+arduino/       Arduino firmware for the sensor nodes
+pi/            collector.py, mqtt_monitor.py, features.py,
+               detector.py, risk.py, dashboard.py
+experiments/   generate_test_data.py, evaluate.py
+data/          Local telemetry and experiment outputs
 ```
 
-### Directory Description
+## Experimental Results
 
-**arduino/**
+The paper reports **6,000 windowed feature samples** across six controlled scenarios: normal baseline, stuck sensor, dropped readings, replay attack, message flooding, and rogue publisher.
 
-Contains firmware for both Arduino sensor nodes.
+### Detection performance
 
-**pi/**
+| Monitoring approach | Precision | Recall | F1-score | False-positive rate |
+|---|---:|---:|---:|---:|
+| Sensor-only | 74.5% | 66.4% | 70.2% | 11.8% |
+| Network-only | 84.2% | 78.8% | 81.4% | 6.4% |
+| **Cross-layer (proposed)** | **92.8%** | **88.5%** | **90.6%** | **3.1%** |
 
-Contains the central data collection, feature extraction, detection, risk assessment, and dashboard modules.
+### Per-scenario F1-score
 
-**experiments/**
+| Scenario | Category | F1-score |
+|---|---|---:|
+| Normal baseline | Normal | 97.1% |
+| Stuck sensor | Hardware fault | 92.6% |
+| Dropped readings | Hardware fault | 90.2% |
+| Replay attack | Cyberattack scenario | 89.1% |
+| Message flooding | Cyberattack scenario | 98.1% |
+| Rogue publisher | Cyberattack scenario | 90.3% |
+| Macro average | — | 92.9% |
 
-Contains the synthetic dataset generator and evaluation scripts.
+### Edge performance reported in the paper
 
-**data/**
+| Metric | Reported result |
+|---|---:|
+| Average processing time per window | 14.2 ms |
+| Raspberry Pi 5 CPU usage | Under 4% |
+| RAM usage | 45 MB |
+| Critical-risk MQTT disconnection command | Within 45 ms |
 
-Stores local databases, generated datasets, model artefacts, and experiment outputs. Generated data and model files should generally not be committed to the repository.
+These results apply to the reported hardware setup and controlled, scripted scenarios. They do not establish generalisation to all IoT devices, attacks, or long-term deployments.
 
----
+## Limitations & Future Work
 
-## Installation
+- Arduino Uno has limited memory, so feature extraction and ML inference run on the gateway.
+- The experiments use controlled scenarios and do not cover every real-world attack or changing deployment condition.
+- MQTT client IDs alone are not cryptographic identity verification.
+- The MQ-4 sensor is uncalibrated and is not suitable as a certified safety instrument.
+- Future work includes longer physical deployments, authenticated MQTT, adaptive baselines, TinyML, and federated learning.
 
-### Prerequisites
+## Authors
 
-- Python 3.10 or later.
-- Git.
-- Arduino IDE.
-- Raspberry Pi 5 or a compatible host computer.
-- An MQTT broker for network monitoring experiments.
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/iot-behavioural-risk-assessment.git
-
-cd iot-behavioural-risk-assessment
-```
-
-Replace `YOUR_USERNAME` with your GitHub username.
-
-### 2. Create a Virtual Environment
-
-On Linux, macOS, or Raspberry Pi OS:
-
-```bash
-python3 -m venv .venv
-
-source .venv/bin/activate
-```
-
-On Windows:
-
-```powershell
-python -m venv .venv
-
-.venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-Create a file named `requirements.txt` containing:
-
-```text
-pyserial
-paho-mqtt
-numpy
-pandas
-scikit-learn
-streamlit
-plotly
-joblib
-```
-
-Install the packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Create the Data Directory
-
-```bash
-mkdir -p data
-```
-
-On Windows PowerShell:
-
-```powershell
-New-Item -ItemType Directory -Force data
-```
-
----
-
-## Hardware Setup
-
-### Step 1: Upload Arduino Firmware
-
-Open the Arduino IDE and upload the following firmware files:
-
-```text
-arduino/node1_events/node1_events.ino
-```
-
-```text
-arduino/node2_sensors/node2_sensors.ino
-```
-
-Select the correct Arduino board and COM port before uploading.
-
-### Step 2: Identify Serial Ports
-
-On Linux:
-
-```bash
-ls /dev/ttyACM*
-```
-
-Alternatively:
-
-```bash
-ls /dev/ttyUSB*
-```
-
-On Windows, identify the assigned COM ports using Device Manager or the Arduino IDE.
-
-Example:
-
-```text
-COM3
-COM4
-```
-
-### Step 3: Connect the Arduino Boards
-
-Connect both Arduino boards to the Raspberry Pi or host computer using USB cables.
-
-Ensure that each Arduino uses the same baud rate as the Python collector.
-
-The proposed default baud rate is:
-
-```text
-9600
-```
-
----
-
-## Running the System
-
-The following commands describe the intended execution workflow.
-
-### 1. Start the Serial Collector
-
-On Raspberry Pi or Linux:
-
-```bash
-python pi/collector.py \
-  --ports /dev/ttyACM0 /dev/ttyACM1
-```
-
-On Windows:
-
-```powershell
-python pi/collector.py --ports COM3 COM4
-```
-
-The collector should read serial data from both Arduino nodes, validate the incoming records, attach timestamps, and store the observations in SQLite.
-
-### 2. Start the MQTT Broker
-
-For local experiments, Mosquitto can be used as the MQTT broker.
-
-After installing and configuring Mosquitto, start the broker using the appropriate command for your operating system.
-
-For a locally running broker:
-
-```bash
-mosquitto -v
-```
-
-The broker should be configured to permit connections from the experimental IoT nodes and monitoring client.
-
-### 3. Start the MQTT Monitor
-
-```bash
-python pi/mqtt_monitor.py \
-  --broker localhost \
-  --topic "iot/#"
-```
-
-The MQTT monitor should subscribe to the configured topics and record message timestamps, publisher identifiers, payload fingerprints, and communication statistics.
-
-### 4. Launch the Dashboard
-
-Open another terminal and activate the virtual environment.
-
-Run:
-
-```bash
-streamlit run pi/dashboard.py
-```
-
-Streamlit will display a local URL in the terminal. Open that URL in a browser to access the monitoring dashboard.
-
----
-
-## Simulation and Mock Mode
-
-The project is designed to support experimentation without physical hardware.
-
-Mock mode enables development and testing of the data processing pipeline using simulated sensor readings and communication events.
-
-### Start the Mock Collector
-
-```bash
-python pi/collector.py --mock
-```
-
-The simulated collector should generate synthetic telemetry records that follow the same schema as the physical data collectors.
-
-### Example Simulated Scenarios
-
-| Scenario | Description |
-|---|---|
-| Normal | Sensor values and message intervals follow the configured baseline. |
-| Stuck Sensor | Sensor readings remain constant for a specified period. |
-| Dropped Readings | Some sensor observations are missing. |
-| Replay | Previously recorded messages are retransmitted. |
-| Flooding | Message frequency increases beyond the baseline rate. |
-| Rogue Publisher | Messages originate from an unrecognised publisher identifier. |
-
-Simulation results must be clearly labelled as synthetic. They should not be reported as real-world attack detection results.
-
----
-
-## Controlled Experiments
-
-The evaluation framework is intended to generate datasets with known ground-truth labels for comparing different detection approaches.
-
-### Experimental Scenarios
-
-| Scenario | Layer | Ground-Truth Description |
-|---|---|---|
-| Normal Operation | Cross-layer | Expected physical and network behaviour |
-| Stuck Sensor | Physical | Sensor produces repeated constant readings |
-| Dropped Readings | Physical | Sensor records are missing or incomplete |
-| Replay Attack | Network | Historical messages are retransmitted |
-| Message Flooding | Network | Excessive message rate |
-| Rogue Publisher | Network | Messages originate from an unauthorised test identity |
-
-### Step 1: Generate Experimental Data
-
-```bash
-python experiments/generate_test_data.py --windows 25
-```
-
-The generator should create labelled windows for normal operation and each controlled scenario.
-
-For reproducibility, the generator should use a fixed random seed and record the configuration used to produce the dataset.
-
-### Step 2: Train the Baseline Model
-
-```bash
-python pi/detector.py train
-```
-
-The training process should use normal or otherwise explicitly designated baseline data.
-
-Attack-labelled evaluation data must not be included in training when evaluating the detector's ability to identify previously unseen anomalies.
-
-### Step 3: Run Inference
-
-```bash
-python pi/detector.py predict
-```
-
-The detector should produce anomaly scores or labels for the evaluation dataset.
-
-### Step 4: Run the Comparative Evaluation
-
-```bash
-python experiments/evaluate.py
-```
-
-The evaluation script should compare the performance of the sensor-only, network-only, and cross-layer approaches using the same held-out evaluation windows.
-
----
-
-## Machine Learning Methodology
-
-### Isolation Forest
-
-Isolation Forest is used as the baseline unsupervised anomaly detection algorithm.
-
-The method identifies observations that can be isolated using relatively few random partitioning operations in a collection of decision trees.
-
-Unusual feature combinations may receive more anomalous scores than observations consistent with the training baseline.
-
-The model is suitable for an initial research baseline because it does not require attack labels during training.
-
-However, an anomaly score alone does not establish that a cyberattack has occurred.
-
-### Feature Groups
-
-#### 1. Sensor-Level Features
-
-| Feature | Description |
-|---|---|
-| Sensor Mean | Average sensor reading within a time window |
-| Sensor Variance | Variation in physical sensor measurements |
-| Minimum and Maximum | Observed measurement range |
-| Event Rate | Number of physical events per window |
-| Dropout Rate | Proportion of missing sensor observations |
-| Stuck Indicator | Evidence of repeated constant sensor readings |
-
-#### 2. Network-Level Features
-
-| Feature | Description |
-|---|---|
-| Message Rate | MQTT messages received per time window |
-| Interarrival Mean | Average interval between consecutive messages |
-| Timing Jitter | Variation in message interarrival times |
-| Replay Count | Number of repeated payload fingerprints within a defined window |
-| Publisher Identity | Whether the observed publisher is authorised |
-| Duplicate Ratio | Proportion of repeated payloads in a window |
-
-A repeated payload is not automatically malicious. Legitimate IoT sensors may transmit identical readings when the physical environment is stable.
-
-Replay evidence should therefore consider timestamps, sequence numbers, message identifiers, or other contextual information where available.
-
-#### 3. Cross-Layer Features
-
-Cross-layer features combine sensor and network observations.
-
-Examples include:
-
-- Sensor update frequency relative to MQTT message frequency.
-- Sensor data consistency during unusually high network traffic.
-- Repeated sensor values combined with repeated historical payloads.
-- Missing sensor updates associated with communication interruptions.
-- Physical event activity correlated with network message timing.
-
-These features aim to provide additional context for distinguishing physical faults from communication anomalies.
-
-### Comparative Models
-
-The experimental framework compares three feature configurations.
-
-| Model | Input Features | Research Purpose |
-|---|---|---|
-| Sensor-Only | Physical sensor features | Establishes the physical monitoring baseline |
-| Network-Only | MQTT communication features | Evaluates network behavioural detection |
-| Cross-Layer | Combined sensor and network features | Evaluates the proposed integrated approach |
-
-All models should be evaluated on equivalent held-out windows with consistent labels and evaluation procedures.
-
----
-
-## Evidence-Based Risk Assessment
-
-The risk engine converts detector outputs and observable evidence into interpretable risk indicators.
-
-The proposed approach separates anomaly detection from risk interpretation.
-
-An anomaly score indicates how unusual an observation is relative to the model's learned baseline. The risk engine additionally considers evidence such as message flooding, repeated payloads, and unauthorised publisher identities.
-
-### Risk Evidence Categories
-
-| Evidence | Example Observation |
-|---|---|
-| Physical Anomaly | Sensor values remain constant unexpectedly |
-| Communication Anomaly | MQTT message frequency exceeds a configured limit |
-| Replay Evidence | Repeated payloads appear with suspicious timing or sequence behaviour |
-| Identity Evidence | A publisher is not present in the configured authorised identity list |
-| Cross-Layer Evidence | Sensor and network observations exhibit an inconsistent relationship |
-
-### Proposed Risk Score
-
-A configurable risk score may combine normalised evidence components:
-
-\[
-R = 100 \times
-\left(
-w_s S +
-w_n N +
-w_i I +
-w_c C
-\right)
-\]
-
-Where:
-
-- \(R\) is the combined risk indicator.
-- \(S\) is the normalised physical sensor anomaly evidence.
-- \(N\) is the normalised network anomaly evidence.
-- \(I\) is the identity-related evidence.
-- \(C\) is the cross-layer inconsistency evidence.
-- \(w_s, w_n, w_i, w_c\) are non-negative weights.
-
-The weights should be configurable, documented, and evaluated experimentally.
-
-For a weighted average, the weights should satisfy:
-
-\[
-w_s + w_n + w_i + w_c = 1
-\]
-
-Each evidence component should be normalised to the interval from 0 to 1.
-
-The final score is a research-oriented risk indicator, not a calibrated probability of compromise.
-
-### Example Alert
-
-```text
-Device: environmental_node_02
-
-Detected Evidence:
-- Repeated sensor payloads
-- Abnormal MQTT message timing
-- Elevated communication rate
-
-Anomaly Status: Detected
-
-Risk Indicator: Elevated
-
-Explanation:
-The observed communication pattern differs from the configured
-baseline and includes repeated payloads during an unusually
-high message rate.
-
-Recommended Action:
-Inspect the device, verify publisher identity, and review
-the relevant network and sensor records.
-```
-
-The example is illustrative. Actual alerts must be generated from observed experimental data.
-
----
-
-## Evaluation Metrics
-
-The comparative evaluation should report standard classification metrics using ground-truth labels.
-
-| Metric | Purpose |
-|---|---|
-| Accuracy | Fraction of correctly classified evaluation windows |
-| Precision | Fraction of predicted positive windows that are positive |
-| Recall | Fraction of positive windows detected |
-| F1-Score | Harmonic mean of precision and recall |
-| False Positive Rate | Fraction of normal windows incorrectly flagged |
-| Confusion Matrix | Distribution of correct and incorrect predictions |
-| Detection Latency | Time between scenario onset and detection |
-
-### Hypothesis Evaluation
-
-For RQ1, compare the cross-layer model with the sensor-only model using the same held-out evaluation dataset.
-
-For RQ2, examine per-class performance across sensor faults and network attack-like scenarios.
-
-For RQ3, assess whether risk explanations correspond to observable evidence and whether the generated alerts provide more context than anomaly scores alone.
-
-The evaluation should report the number of samples, class distribution, experimental configuration, and variability across repeated runs.
-
-A single synthetic experiment is insufficient to establish generalisation to real-world IoT deployments.
-
----
-
-## Research Limitations
-
-### Experimental Scope
-
-The MQ-4 sensor produces uncalibrated ADC raw units unless appropriate calibration and measurement procedures are implemented.
-
-It is not a safety-rated gas detector and must not be used as the sole basis for detecting hazardous gas concentrations or protecting human life.
-
-### Threat Model
-
-Security evaluations are conducted in a controlled environment.
-
-The initial framework models specific behaviours, including:
-
-- Packet or message replay.
-- Message-rate flooding.
-- Unauthorised publisher identifiers.
-- Physical sensor malfunctions.
-
-Results demonstrate performance only for the implemented scenarios, hardware configuration, and experimental conditions.
-
-They do not establish detection of every IoT attack or guarantee security against adaptive adversaries.
-
-### Network Identity Limitations
-
-An MQTT client identifier or publisher-supplied field is not, by itself, a cryptographically verified identity.
-
-Production deployments should consider broker authentication, access control lists, TLS, and appropriate device credentials.
-
-### Machine Learning Limitations
-
-Isolation Forest detects deviations from a learned baseline. It does not inherently identify attack intent, and its output depends on the quality of the training data, feature engineering, and experimental configuration.
-
-Thresholds and risk weights require validation before being used in operational environments.
-
----
-
-## Future Work
-
-Potential future extensions include:
-
-1. **Temporal Deep Learning:** Evaluate LSTM, temporal convolutional networks, or transformer-based anomaly detection.
-2. **Federated Learning:** Investigate collaborative detection across multiple IoT gateways without centralising raw sensor data.
-3. **Explainable AI:** Integrate SHAP or other feature attribution methods to explain model outputs.
-4. **Device Fingerprinting:** Explore behavioural device identification based on communication patterns.
-5. **Adaptive Baselines:** Investigate concept drift and changing environmental conditions.
-6. **Edge Deployment:** Evaluate computational overhead and detection latency on Raspberry Pi and embedded hardware.
-7. **Real-World Dataset Evaluation:** Validate the framework against publicly available IoT security datasets and carefully documented physical experiments.
-8. **Secure Communication:** Integrate authenticated MQTT communication and device-level access controls.
-
----
+**Nimra Wani and Milad Ajaz Bhat**  
+Central University of Kashmir, Ganderbal, Jammu and Kashmir, India
 
 
