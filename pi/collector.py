@@ -1,11 +1,12 @@
 """
-USB Serial Collector for Arduino Sensor Nodes.
-Reads JSON telemetry lines from configured serial ports and stores them in SQLite.
-Also supports a simulation / mock mode for local testing without physical hardware.
+USB Serial Collector / Gateway for the Arduino nodes.
+Runs on the Raspberry Pi. Reads JSON telemetry lines from both Arduinos, stores
+them in SQLite, publishes them to MQTT (so the laptop can monitor the network),
+and handles RFID access decisions (shown on the room node's LCD).
+Also supports a mock mode for local testing without hardware.
 """
 
 import os
-import sys
 import json
 import time
 import sqlite3
@@ -19,12 +20,25 @@ try:
 except ImportError:
     serial = None
 
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
 DB_PATH = "data/telemetry.db"
+ALLOWED_UIDS_PATH = "data/allowed_uids.txt"
 DEFAULT_PORTS = [
     "/dev/ttyACM0",
     "/dev/ttyACM1",
 ]
 BAUD = 9600
+LCD_DEVICE = "arduino_1"
+
+# Filled in at runtime: open serial port per device (to send LCD messages back),
+# and the MQTT client (None when publishing is off).
+ports_by_device = {}
+mqtt_client = None
+db_lock = threading.Lock()
 
 
 def get_timestamp():
@@ -49,24 +63,89 @@ def init_db(db_path=DB_PATH):
 
 def store_reading(device, event, payload_dict, db_path=DB_PATH):
     received = get_timestamp()
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        INSERT INTO telemetry (received_at, device, event, payload)
-        VALUES (?, ?, ?, ?)
-    """, (
-        received,
-        device,
-        event,
-        json.dumps(payload_dict)
-    ))
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(db_path)
+        conn.execute("""
+            INSERT INTO telemetry (received_at, device, event, payload)
+            VALUES (?, ?, ?, ?)
+        """, (
+            received,
+            device,
+            event,
+            json.dumps(payload_dict)
+        ))
+        conn.commit()
+        conn.close()
     return received
+
+
+def publish(device, event, payload_dict):
+    if mqtt_client is not None:
+        mqtt_client.publish(f"iot/{device}/{event}", json.dumps(payload_dict))
+
+
+def record(device, event, payload_dict, db_path=DB_PATH):
+    ts = store_reading(device, event, payload_dict, db_path)
+    publish(device, event, payload_dict)
+    return ts
+
+
+def load_allowed_uids(path=ALLOWED_UIDS_PATH):
+    """One card UID per line (hex, as printed by the door node). Lines starting with # are ignored."""
+    try:
+        with open(path) as f:
+            return {line.strip().upper() for line in f if line.strip() and not line.startswith("#")}
+    except FileNotFoundError:
+        return set()
+
+
+def show_on_lcd(line1, line2=""):
+    port = ports_by_device.get(LCD_DEVICE)
+    if port is None:
+        print(f"[LCD] (room node not connected) {line1} | {line2}")
+        return
+    try:
+        port.write(f"LCD:{line1[:16]}|{line2[:16]}\n".encode("ascii", errors="replace"))
+    except Exception as e:
+        print(f"[LCD] Write failed: {e}")
+
+
+def handle_rfid_scan(data, db_path=DB_PATH):
+    uid = str(data.get("uid", "")).upper()
+    granted = uid in load_allowed_uids()
+    event = "access_granted" if granted else "access_denied"
+    device = data.get("device", "unknown")
+    # Timestamp keeps repeat scans of the same card from looking like MQTT replays.
+    record(device, event, {"device": device, "event": event, "uid": uid, "at": get_timestamp()}, db_path)
+    show_on_lcd("Access granted" if granted else "Access denied", uid)
+    print(f"[Access] {uid} -> {event}")
+
+
+def handle_line(line, port_name, ser=None, db_path=DB_PATH):
+    try:
+        data = json.loads(line)
+    except ValueError:
+        data = None
+    # A half-received line after a board reset can still parse (e.g. "240"), so require an object.
+    if not isinstance(data, dict):
+        print(f"[{port_name}] Invalid JSON line received: {line}")
+        return
+
+    device = data.get("device", "unknown")
+    event = data.get("event", "sensor_reading")
+    if ser is not None:
+        ports_by_device[device] = ser
+
+    ts = record(device, event, data, db_path)
+    print(f"[{ts}] [{port_name}] {device} -> {data}")
+
+    if event == "rfid_scan":
+        handle_rfid_scan(data, db_path)
 
 
 def collect_serial(port, db_path=DB_PATH):
     if serial is None:
-        print(f"Error: pyserial is not installed. Run 'pip install pyserial'")
+        print("Error: pyserial is not installed. Run 'pip install pyserial'")
         return
 
     print(f"Starting serial collector thread for {port} at {BAUD} baud...")
@@ -76,21 +155,13 @@ def collect_serial(port, db_path=DB_PATH):
                 print(f"[Collector] Connected to {port}")
                 while True:
                     line = ser.readline().decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        print(f"[{port}] Invalid JSON line received: {line}")
-                        continue
-
-                    device = data.get("device", "unknown")
-                    event = data.get("event", "sensor_reading")
-                    ts = store_reading(device, event, data, db_path)
-                    print(f"[{ts}] [{port}] {device} -> {data}")
+                    if line:
+                        handle_line(line, port, ser, db_path)
 
         except Exception as e:
+            for device, s in list(ports_by_device.items()):
+                if s.port == port:
+                    del ports_by_device[device]
             print(f"[Collector] Error on {port}: {e}. Retrying in 3 seconds...")
             time.sleep(3)
 
@@ -98,60 +169,70 @@ def collect_serial(port, db_path=DB_PATH):
 def simulate_node(device_name, interval_sec=1.0, db_path=DB_PATH):
     """Generates synthetic baseline telemetry for testing on machines without physical Arduinos."""
     print(f"[Sim] Started simulator for {device_name} (interval {interval_sec}s)...")
-    boot_payload = {"device": device_name, "event": "boot"}
-    store_reading(device_name, "boot", boot_payload, db_path)
+    record(device_name, "boot", {"device": device_name, "event": "boot"}, db_path)
 
-    mq4_base = 220.0
+    mq135_base = 220.0
     distance_base = 45.0
 
     while True:
         uptime = int(time.time() * 1000)
         if device_name == "arduino_1":
-            motion = 1 if random.random() < 0.15 else 0
-            button = 1 if random.random() < 0.05 else 0
+            ir_count = 1 if random.random() < 0.05 else 0
             payload = {
                 "device": "arduino_1",
                 "event": "sensor_reading",
-                "motion": motion,
-                "button": button,
+                "mq135_raw": int(max(50, min(1023, mq135_base + random.gauss(0, 4)))),
+                "distance_cm": round(max(5.0, distance_base + random.gauss(0, 1.2)), 2),
+                "ir": ir_count,
+                "ir_count": ir_count,
                 "uptime_ms": uptime
             }
         else:
-            # Arduino 2
-            mq4_val = int(max(50, min(1023, mq4_base + random.gauss(0, 4))))
-            dist_val = round(max(5.0, distance_base + random.gauss(0, 1.2)), 2)
             payload = {
                 "device": "arduino_2",
                 "event": "sensor_reading",
-                "mq4_raw": mq4_val,
-                "distance_cm": dist_val,
+                "motion": 1 if random.random() < 0.15 else 0,
+                "rfid_ok": 1,
                 "uptime_ms": uptime
             }
 
-        ts = store_reading(device_name, "sensor_reading", payload, db_path)
+        ts = record(device_name, "sensor_reading", payload, db_path)
         print(f"[SIM-{ts}] {device_name} -> {payload}")
         time.sleep(interval_sec)
 
 
+def connect_mqtt(host, port):
+    global mqtt_client
+    if mqtt is None:
+        print("Error: paho-mqtt is not installed. Run 'pip install paho-mqtt'")
+        return
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="gateway_pi")
+    client.connect(host, port, 60)
+    client.loop_start()  # background thread; reconnects automatically
+    mqtt_client = client
+    print(f"[MQTT] Publishing to {host}:{port} under iot/<device>/<event>")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="IoT Telemetry Collector")
+    parser = argparse.ArgumentParser(description="IoT Telemetry Collector / Gateway")
     parser.add_argument("--ports", nargs="+", default=DEFAULT_PORTS, help="Serial ports to listen on")
     parser.add_argument("--db", default=DB_PATH, help="SQLite database path")
     parser.add_argument("--mock", action="store_true", help="Run in mock/simulation mode without hardware")
+    parser.add_argument("--mqtt-host", help="MQTT broker to publish to (e.g. localhost on the Pi). Omit to disable.")
+    parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port")
     args = parser.parse_args()
 
     init_db(args.db)
+    if args.mqtt_host:
+        connect_mqtt(args.mqtt_host, args.mqtt_port)
 
     if args.mock:
         print("=== RUNNING IN MOCK / SIMULATION MODE ===")
-        t1 = threading.Thread(target=simulate_node, args=("arduino_1", 1.0, args.db), daemon=True)
-        t2 = threading.Thread(target=simulate_node, args=("arduino_2", 1.0, args.db), daemon=True)
-        t1.start()
-        t2.start()
+        for name in ("arduino_1", "arduino_2"):
+            threading.Thread(target=simulate_node, args=(name, 1.0, args.db), daemon=True).start()
     else:
         for port in args.ports:
-            thread = threading.Thread(target=collect_serial, args=(port, args.db), daemon=True)
-            thread.start()
+            threading.Thread(target=collect_serial, args=(port, args.db), daemon=True).start()
 
     print("Collector running. Press Ctrl+C to stop.")
     try:

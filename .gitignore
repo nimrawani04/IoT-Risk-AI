@@ -17,3 +17,4 @@ data/*.csv
 .idea/
 .DS_Store
 Thumbs.db
+data/allowed_uids.txt

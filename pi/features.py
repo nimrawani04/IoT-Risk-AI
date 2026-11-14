@@ -64,7 +64,7 @@ def extract_sensor_features(df_sensor, window="30s"):
     df = df.set_index("received_at")
 
     feature_frames = []
-    sensor_cols = ["mq4_raw", "distance_cm", "motion", "button"]
+    sensor_cols = ["mq135_raw", "distance_cm", "motion", "ir_count"]
 
     for device, group in df.groupby("device"):
         group = group.sort_index()

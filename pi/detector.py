@@ -23,16 +23,16 @@ ALL_FEATURE_COLUMNS = [
     "event_rate",
     "interval_mean",
     "interval_std",
-    "mq4_raw_mean",
-    "mq4_raw_std",
-    "mq4_raw_unique",
-    "mq4_raw_is_stuck",
+    "mq135_raw_mean",
+    "mq135_raw_std",
+    "mq135_raw_unique",
+    "mq135_raw_is_stuck",
     "distance_cm_mean",
     "distance_cm_std",
     "distance_cm_unique",
     "distance_cm_is_stuck",
     "motion_mean",
-    "button_mean",
+    "ir_count_mean",
     # Network Features
     "net_publish_rate",
     "net_replay_count",
@@ -113,7 +113,7 @@ def predict(features_df=None, model_path=MODEL_PATH, output_csv="data/detections
     risk_results = []
     for _, row in features_df.iterrows():
         is_stuck = bool(
-            row.get("mq4_raw_is_stuck", 0) or row.get("distance_cm_is_stuck", 0)
+            row.get("mq135_raw_is_stuck", 0) or row.get("distance_cm_is_stuck", 0)
         )
         assessment = RiskAssessmentEngine.assess(
             anomaly_detected=(row["prediction"] == -1),

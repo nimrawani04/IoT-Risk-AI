@@ -162,38 +162,62 @@ In the reported experiment, when a critical risk score (\(R=9\)) was triggered, 
 
 | Component | Quantity | Purpose |
 |---|---:|---|
-| Raspberry Pi 5 (4 GB) or compatible host PC | 1 | Runs data collection, storage, feature extraction, ML, risk engine, and dashboard |
-| Arduino Uno R3 | 2 | Physical sensor data acquisition |
-| PIR motion sensor | 1 | Motion/event detection |
-| Push button | 1 | Manual event input |
-| MQ-4 gas sensor module | 1 | Relative gas-sensor readings for experiments |
-| HC-SR04 ultrasonic sensor | 1 | Distance/proximity measurements |
-| USB cables | 2 | Connect Arduino boards to the gateway |
-| Breadboard and jumper wires | As required | Circuit connections |
-| Heltec Wi-Fi/LoRa board | Optional | Wireless MQTT telemetry experiments |
+| Raspberry Pi 4 (4 GB) | 1 | Gateway: reads both Arduinos over USB, runs Mosquitto, publishes MQTT, decides RFID access |
+| Laptop | 1 | Subscribes over Wi-Fi: MQTT monitor, detector, risk engine and dashboard |
+| Arduino Uno R3 | 2 | Room node and door node |
+| HC-SR04 ultrasonic sensor | 1 | Proximity to the door |
+| IR obstacle sensor | 1 | Counts people passing the doorway |
+| MQ-135 air-quality sensor | 1 | Relative air-quality readings |
+| 16x2 LCD with I2C backpack | 1 | Shows access results and live readings |
+| PIR motion sensor | 1 | Motion inside the room |
+| RC522 RFID reader + cards | 1 | Door access |
+| USB cables | 2 | Connect the Arduinos to the Pi |
 
-**Safety note:** The MQ-4 module is uncalibrated in this setup and is used for relative anomaly experiments only. It is not a certified gas detector and must not be relied upon for life-safety monitoring.
+**Safety note:** The MQ-135 module is uncalibrated and is used for relative anomaly experiments only. It is not a certified gas detector and must not be relied upon for life-safety monitoring.
 
 ## Hardware Connections
 
-### Arduino Uno 1 — Event Node
+### Arduino Uno 1 — Room node (`arduino/room_node`)
 
 | Component | Arduino pin |
 |---|---|
-| PIR OUT | D8 |
-| Push button | D2 and GND (using `INPUT_PULLUP`) |
-| PIR VCC / GND | As specified by the module / GND |
+| HC-SR04 Trigger / Echo | D3 / D4 (VCC 5V) |
+| IR sensor OUT | D7 (VCC 5V) |
+| LCD I2C SDA / SCL | A4 / A5 (VCC 5V) |
+| MQ-135 AO | A0 (DO not connected, VCC 5V) |
 
-### Arduino Uno 2 — Environmental Node
+Library: `LiquidCrystal_I2C`. The LCD address is set to `0x27`; change it to `0x3F` if the screen stays blank.
+
+### Arduino Uno 2 — Door node (`arduino/door_node`)
 
 | Component | Arduino pin |
 |---|---|
-| MQ-4 Analog Output | A0 |
-| HC-SR04 Trigger | D3 |
-| HC-SR04 Echo | D4 |
-| Sensor power and ground | Follow module specifications; connect grounds appropriately |
+| PIR OUT | D8 (VCC 5V) |
+| RC522 SDA (SS) / SCK / MOSI / MISO / RST | D10 / D13 / D11 / D12 / D9 |
+| RC522 VCC | **3.3V only** |
 
-**Electrical note:** HC-SR04 Echo is typically a 5V signal. Use a suitable level shifter or voltage divider when connecting it to a 3.3V-only input. Check the specifications of each module before wiring.
+Library: `MFRC522`.
+
+**Electrical notes:** Never connect sensors directly to the Pi's GPIO pins; they are 3.3V and the HC-SR04 and IR modules output 5V. Power the Pi with a 3A supply, because it also powers both Arduinos and the MQ-135 heater.
+
+## Running with the Pi gateway
+
+On the Pi:
+
+```bash
+sudo apt install mosquitto
+sudo cp pi/mosquitto.conf /etc/mosquitto/conf.d/iot.conf && sudo systemctl restart mosquitto
+cp data/allowed_uids.example.txt data/allowed_uids.txt   # then add your card UIDs
+python pi/collector.py --mqtt-host localhost
+```
+
+On the laptop (replace `<pi-ip>` with the Pi's address):
+
+```bash
+python pi/mqtt_monitor.py --broker <pi-ip>
+```
+
+The collector publishes every reading to `iot/<device>/<event>`. RFID scans are checked against `data/allowed_uids.txt`, and the result is shown on the room node's LCD.
 
 ---
 

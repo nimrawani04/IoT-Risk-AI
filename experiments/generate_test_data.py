@@ -97,39 +97,39 @@ def generate_experiment_dataset(db_path=DB_PATH, windows_per_scenario=20, window
             sec_elapsed = 0.0
 
             # Variables for fault states
-            stuck_mq4 = 230
+            stuck_mq135 = 230
             replay_payload_cache = None
 
             while sec_elapsed < window_sec:
                 t_offset = current_time_offset + sec_elapsed
                 ts_iso = get_timestamp(t_offset)
 
-                # 1. Physical Node 1 (PIR & Button)
+                # 1. Physical Node 1 (PIR & IR)
                 if scenario_name == "NORMAL" or "FAULT" in scenario_name or "REPLAY" in scenario_name or "ROGUE" in scenario_name:
                     mot = 1 if random.random() < 0.1 else 0
                     btn = 1 if random.random() < 0.03 else 0
-                    p1 = {"device": "arduino_1", "event": "sensor_reading", "motion": mot, "button": btn, "uptime_ms": int(t_offset * 1000)}
+                    p1 = {"device": "arduino_1", "event": "sensor_reading", "motion": mot, "ir_count": btn, "uptime_ms": int(t_offset * 1000)}
                     conn.execute("INSERT INTO telemetry (received_at, device, event, payload) VALUES (?, ?, ?, ?)",
                                  (ts_iso, "arduino_1", "sensor_reading", json.dumps(p1)))
 
-                # 2. Physical Node 2 (MQ4 & Distance)
+                # 2. Physical Node 2 (MQ-135 & Distance)
                 if scenario_name == "NORMAL":
-                    mq4 = int(220 + random.gauss(0, 3))
+                    mq135 = int(220 + random.gauss(0, 3))
                     dist = round(45.0 + random.gauss(0, 1.0), 2)
-                    p2 = {"device": "arduino_2", "event": "sensor_reading", "mq4_raw": mq4, "distance_cm": dist, "uptime_ms": int(t_offset * 1000)}
+                    p2 = {"device": "arduino_2", "event": "sensor_reading", "mq135_raw": mq135, "distance_cm": dist, "uptime_ms": int(t_offset * 1000)}
                     conn.execute("INSERT INTO telemetry (received_at, device, event, payload) VALUES (?, ?, ?, ?)",
                                  (ts_iso, "arduino_2", "sensor_reading", json.dumps(p2)))
 
                 elif scenario_name == "SENSOR_FAULT_STUCK":
                     # Stuck constant reading with 0 variance
-                    p2 = {"device": "arduino_2", "event": "sensor_reading", "mq4_raw": stuck_mq4, "distance_cm": 45.0, "uptime_ms": int(t_offset * 1000)}
+                    p2 = {"device": "arduino_2", "event": "sensor_reading", "mq135_raw": stuck_mq135, "distance_cm": 45.0, "uptime_ms": int(t_offset * 1000)}
                     conn.execute("INSERT INTO telemetry (received_at, device, event, payload) VALUES (?, ?, ?, ?)",
                                  (ts_iso, "arduino_2", "sensor_reading", json.dumps(p2)))
 
                 elif scenario_name == "SENSOR_FAULT_DROPOUT":
                     # Connection drops / missing distance timeouts
                     if random.random() > 0.4:
-                        p2 = {"device": "arduino_2", "event": "sensor_reading", "mq4_raw": int(220 + random.gauss(0, 3)), "distance_cm": -1.0, "uptime_ms": int(t_offset * 1000)}
+                        p2 = {"device": "arduino_2", "event": "sensor_reading", "mq135_raw": int(220 + random.gauss(0, 3)), "distance_cm": -1.0, "uptime_ms": int(t_offset * 1000)}
                         conn.execute("INSERT INTO telemetry (received_at, device, event, payload) VALUES (?, ?, ?, ?)",
                                      (ts_iso, "arduino_2", "sensor_reading", json.dumps(p2)))
 
@@ -137,7 +137,7 @@ def generate_experiment_dataset(db_path=DB_PATH, windows_per_scenario=20, window
                     # Flooding with high rate (10 msgs/sec)
                     for f in range(8):
                         sub_iso = get_timestamp(t_offset + f * 0.1)
-                        p_flood = {"device": "arduino_2", "event": "sensor_reading", "mq4_raw": 999, "distance_cm": 1.0, "uptime_ms": int(t_offset * 1000)}
+                        p_flood = {"device": "arduino_2", "event": "sensor_reading", "mq135_raw": 999, "distance_cm": 1.0, "uptime_ms": int(t_offset * 1000)}
                         conn.execute("INSERT INTO telemetry (received_at, device, event, payload) VALUES (?, ?, ?, ?)",
                                      (sub_iso, "arduino_2", "sensor_reading", json.dumps(p_flood)))
                         # Network flood
