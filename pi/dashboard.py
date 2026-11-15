@@ -14,7 +14,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DB_PATH = "data/telemetry.db"
-DETECTIONS_PATH = "data/detections.csv"
 
 st.set_page_config(
     page_title="IoT Behavioural Risk Monitor",
@@ -69,6 +68,13 @@ def load_all_telemetry():
     except Exception:
         df_net = pd.DataFrame()
 
+    # The frames above are capped at 3000 rows for charts; the metrics need the real totals.
+    totals = {}
+    for table in ("telemetry", "network_telemetry"):
+        try:
+            totals[table] = conn.execute(f"SELECT MAX(id) FROM {table}").fetchone()[0] or 0
+        except Exception:
+            totals[table] = 0
     conn.close()
 
     records = []
@@ -83,66 +89,100 @@ def load_all_telemetry():
             continue
 
     df_sensor = pd.DataFrame(records)
-    return df_sensor, df_net
+    return df_sensor, df_net, totals
+
+
+def load_detections(limit=360):
+    """Latest AI verdicts (360 x 10 s windows = the last hour), oldest first."""
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query(f"SELECT * FROM detections ORDER BY window_start DESC LIMIT {int(limit)}", conn)
+    except Exception:
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    if not df.empty:
+        df["window_start"] = pd.to_datetime(df["window_start"], utc=True, format="ISO8601")
+        df = df.sort_values("window_start")
+    return df
+
+
+SEVERITY_BOX = {"CRITICAL": st.error, "HIGH": st.error, "MEDIUM": st.warning, "LOW": st.info, "NONE": st.success}
 
 
 # Only this fragment reruns on the timer, so the sidebar and page layout stay put
 # instead of the whole page redrawing (and flickering) on every refresh.
 @st.fragment(run_every=refresh_sec if auto_refresh else None)
 def live_view():
-    df_sensor, df_net = load_all_telemetry()
-    detections_exist = os.path.exists(DETECTIONS_PATH)
-    df_det = pd.read_csv(DETECTIONS_PATH) if detections_exist else pd.DataFrame()
+    df_sensor, df_net, totals = load_all_telemetry()
+    df_det = load_detections()
 
     # Top Metrics Row
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Sensor Observations", len(df_sensor))
-    col2.metric("Network Packets", len(df_net))
+    col1.metric("Sensor Observations", f"{totals.get('telemetry', 0):,}")
+    col2.metric("Network Packets", f"{totals.get('network_telemetry', 0):,}")
     col3.metric("Active Devices", df_sensor["device"].nunique() if not df_sensor.empty else 0)
-
-    if not df_det.empty and "risk_category" in df_det.columns:
-        anom_count = int((df_det["status"] == "Anomalous").sum())
-        col4.metric("Flagged Windows", anom_count, delta=f"{anom_count} anomalies", delta_color="inverse")
-    else:
-        col4.metric("Flagged Windows", 0)
+    flagged = int((df_det["severity"] != "NONE").sum()) if not df_det.empty else 0
+    col4.metric("Flagged Windows (last hour)", flagged)
 
     st.divider()
 
     # VIEW 1: Overview & Alerts
     if view_mode == "Overview & Alerts":
-        st.subheader("🚨 Risk & Vulnerability Assessment Feed")
-        
+        st.subheader("🤖 Live AI Assessment")
+
         if df_det.empty:
-            st.info("No detection results found yet. Train or run inference with `python pi/detector.py predict` or run experiments.")
+            st.info("No AI verdicts yet. Train with `python pi/detector.py train`, then start "
+                    "`python pi/detector.py live --reports`.")
         else:
-            # Latest Risk Status
             latest = df_det.iloc[-1]
-            cat = latest.get("risk_category", "UNKNOWN")
-            score = latest.get("risk_score", 0)
-            sev = latest.get("severity", "LOW")
-            evidence = latest.get("evidence_notes", "No evidence recorded")
+            age = (pd.Timestamp.now(tz="UTC") - latest["window_start"]).total_seconds()
+            if age > 60:
+                st.warning(f"Latest verdict is {age:.0f}s old. Is `detector.py live` running?")
 
-            st.markdown(f"""
-            ### Current Window Assessment: **{cat}** (Risk Score: `{score}/100` | Severity: `{sev}`)
-            **Evidence Trail:** {evidence}
-            """)
+            box = SEVERITY_BOX.get(latest["severity"], st.info)
+            box(f"**{latest['risk_category']}** | risk {latest['risk_score']}/100 | "
+                f"severity {latest['severity']}  \n{latest['evidence']}")
 
-            # Risk Score Gauge / Trend
-            fig_score = px.line(
-                df_det,
-                x="received_at",
-                y="risk_score",
-                title="Real-time Risk Score Trajectory (0 = Benign, 100 = High Risk Attack)",
-                color_discrete_sequence=["#ef4444"],
-                markers=True
-            )
-            fig_score.update_layout(yaxis_range=[0, 105], template="plotly_dark")
-            st.plotly_chart(fig_score, use_container_width=True)
+            colL, colR = st.columns(2)
+            if latest.get("ml_scenario"):
+                colL.metric("AI classifier says", latest["ml_scenario"].replace("_", " "),
+                            f"{latest['ml_confidence']:.0%} confident", delta_color="off")
+            else:
+                colL.metric("AI classifier says", "not trained yet")
+            colR.metric("Anomaly score", f"{latest['anomaly_score']:+.3f}",
+                        "unusual" if latest["is_anomaly"] else "normal",
+                        delta_color="inverse" if latest["is_anomaly"] else "normal")
+            if latest.get("reasons"):
+                st.caption(f"Why: {latest['reasons']}")
 
-            # Recent Detection Table
-            st.subheader("Recent Evaluation Windows")
-            display_cols = [c for c in ["received_at", "device", "status", "risk_category", "severity", "risk_score", "evidence_notes"] if c in df_det.columns]
-            st.dataframe(df_det[display_cols].tail(20), use_container_width=True)
+            fig_score = px.line(df_det, x="window_start", y="risk_score", markers=True,
+                                title="Risk score (0 = normal, 100 = critical attack)",
+                                color_discrete_sequence=["#ef4444"], template="plotly_dark")
+            fig_score.update_layout(yaxis_range=[0, 105])
+            fig_anom = px.line(df_det, x="window_start", y="anomaly_score",
+                               title="Isolation Forest anomaly score (below 0 = unusual)",
+                               color_discrete_sequence=["#a78bfa"], template="plotly_dark")
+            fig_anom.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+            colA, colB = st.columns(2)
+            colA.plotly_chart(fig_score, use_container_width=True)
+            colB.plotly_chart(fig_anom, use_container_width=True)
+
+            reports = df_det[df_det["report"].notna()].tail(5).iloc[::-1]
+            st.subheader("📝 AI Incident Reports (local LLM)")
+            if reports.empty:
+                st.caption("None yet. Reports are written for HIGH/CRITICAL incidents when "
+                           "`detector.py live --reports` is running with Ollama.")
+            for _, r in reports.iterrows():
+                with st.expander(f"{r['window_start']:%H:%M:%S} · {r['risk_category']} · risk {r['risk_score']}"):
+                    st.markdown(r["report"])
+
+            st.subheader("Recent windows")
+            cols = ["window_start", "risk_category", "severity", "risk_score", "ml_scenario",
+                    "ml_confidence", "anomaly_score", "reasons", "evidence"]
+            st.dataframe(df_det[cols].tail(20).iloc[::-1], use_container_width=True, hide_index=True)
 
     # VIEW 2: Sensor Telemetry
     elif view_mode == "Sensor Telemetry":
@@ -199,19 +239,23 @@ def live_view():
         """)
 
         st.code("""
-        # Generate controlled experimental dataset
-        python experiments/generate_test_data.py --duration 120
+# 1. Record labelled sessions on the real hardware (repeat each a few times)
+python experiments/record_session.py --list
+python experiments/record_session.py normal --minutes 10
+python experiments/record_session.py attack_brute_force --minutes 2
 
-        # Run research benchmark and evaluate Sensor-Only vs Network-Only vs Cross-Layer
-        python experiments/evaluate.py
-        """, language="bash")
+# 2. Train the anomaly model + fault/attack classifier
+python pi/detector.py train
 
-        if os.path.exists("data/evaluation_summary.csv"):
-            st.subheader("Benchmark Comparison Results")
-            eval_df = pd.read_csv("data/evaluation_summary.csv")
-            st.dataframe(eval_df, use_container_width=True)
+# 3. Evaluate Sensor-only vs Network-only vs Door-only vs Cross-layer (split by session)
+python experiments/evaluate_sessions.py
+""", language="bash")
+
+        if os.path.exists("data/evaluation_sessions.csv"):
+            st.subheader("Results on recorded sessions")
+            st.dataframe(pd.read_csv("data/evaluation_sessions.csv"), use_container_width=True, hide_index=True)
         else:
-            st.info("Run `python experiments/evaluate.py` to generate the evaluation benchmark.")
+            st.info("Run `python experiments/evaluate_sessions.py` after recording sessions.")
 
 
 live_view()

@@ -121,6 +121,93 @@ def handle_rfid_scan(data, db_path=DB_PATH):
     print(f"[Access] {uid} -> {event}")
 
 
+# --- Lab scenario injection (only with --allow-inject) ---------------------
+# Lets experiments/auto_record.py act out faults and door scenarios remotely by
+# changing real readings at the gateway, so nobody has to unplug wires or walk
+# through the door. Off by default: anyone on the network could otherwise fake data.
+INJECT_TOPIC = "lab/inject"
+UNKNOWN_UID = "DEADBEEF"
+inject = {"scenario": None, "until": 0.0, "pending_ir": 0, "presence_until": 0.0}
+
+# Door behaviour per scenario: (allowed card?, IR passes, seconds between repeats)
+DOOR_ACTIONS = {
+    "normal": (True, 1, (30, 60)),
+    "normal_scan_no_entry": (True, 0, (15, 30)),
+    "attack_brute_force": (False, 0, (2, 4)),
+    "attack_slow_brute_force": (False, 0, (6, 10)),
+    "attack_tailgating": (True, 3, (20, 30)),
+    "attack_break_in": (None, 1, (15, 25)),
+}
+# In normal use people also stand near the door without scanning (chatting, passing by).
+LINGER_SCENARIOS = {"normal", "normal_scan_no_entry"}
+
+
+def active_scenario():
+    return inject["scenario"] if time.time() < inject["until"] else None
+
+
+def on_inject(client, userdata, msg):
+    try:
+        cmd = json.loads(msg.payload)
+        scenario = cmd.get("scenario")
+        seconds = min(float(cmd.get("seconds", 0)), 3600)  # always expires, even if the laptop disappears
+    except (ValueError, AttributeError, TypeError):
+        print(f"[Inject] Ignored bad command: {msg.payload!r}")
+        return
+    inject.update(scenario=scenario, until=time.time() + seconds, pending_ir=0, presence_until=0.0)
+    print(f"[Inject] {scenario or 'cleared'} for {seconds:.0f}s")
+
+
+def apply_fault(data):
+    """Change a real sensor_reading to look like the active fault. Returns None to drop it."""
+    s, device = active_scenario(), data.get("device")
+    if s and time.time() < inject["presence_until"]:
+        # Someone at the door: the ultrasonic sees them and the PIR fires.
+        if device == "arduino_1":
+            data["distance_cm"] = round(random.uniform(35, 75), 2)
+        elif device == "arduino_2":
+            data["motion"] = int(random.random() < 0.85)
+    if device == "arduino_1":
+        if s == "fault_node_offline":
+            return None
+        if s == "fault_ultrasonic":
+            data["distance_cm"] = -1  # what the firmware sends when no echo comes back
+        if s == "fault_gas_sensor":
+            # shortcut: random values stand in for a floating A0 pin; record a real unplug to compare.
+            data["mq135_raw"] = random.randint(0, 1023)
+        if inject["pending_ir"]:
+            # One person per reading, like real people walking through one after another.
+            data["ir_count"] = data.get("ir_count", 0) + 1
+            data["ir"] = 1
+            inject["pending_ir"] -= 1
+    elif device == "arduino_2" and s == "fault_rfid":
+        data["rfid_ok"] = 0
+    return data
+
+
+def door_actor(db_path=DB_PATH):
+    """Performs card scans and IR passes for the active door scenario."""
+    last, next_at, next_linger = None, 0.0, 0.0
+    while True:
+        s, now = active_scenario(), time.time()
+        if s != last:
+            last, next_at, next_linger = s, now + random.uniform(2, 5), now + random.uniform(10, 40)
+        if s in LINGER_SCENARIOS and now >= next_linger:
+            inject["presence_until"] = max(inject["presence_until"], now + random.uniform(5, 30))
+            next_linger = now + random.uniform(40, 90)
+        if s in DOOR_ACTIONS and now >= next_at:
+            allowed, passes, gap = DOOR_ACTIONS[s]
+            inject["presence_until"] = max(inject["presence_until"], now + random.uniform(3, 4) + passes)
+            if allowed is not None:
+                uid = random.choice(sorted(load_allowed_uids()) or ["613E7017"]) if allowed else UNKNOWN_UID
+                # Same line the door node prints, sent through the normal path.
+                handle_line(json.dumps({"device": "arduino_2", "event": "rfid_scan", "uid": uid}), "inject",
+                            db_path=db_path)
+            inject["pending_ir"] += passes
+            next_at = now + random.uniform(*gap)
+        time.sleep(0.5)
+
+
 def handle_line(line, port_name, ser=None, db_path=DB_PATH):
     try:
         data = json.loads(line)
@@ -135,6 +222,10 @@ def handle_line(line, port_name, ser=None, db_path=DB_PATH):
     event = data.get("event", "sensor_reading")
     if ser is not None:
         ports_by_device[device] = ser
+    if event == "sensor_reading":
+        data = apply_fault(data)
+        if data is None:
+            return
 
     ts = record(device, event, data, db_path)
     print(f"[{ts}] [{port_name}] {device} -> {data}")
@@ -196,17 +287,26 @@ def simulate_node(device_name, interval_sec=1.0, db_path=DB_PATH):
                 "uptime_ms": uptime
             }
 
+        payload = apply_fault(payload)
+        if payload is None:
+            time.sleep(interval_sec)
+            continue
         ts = record(device_name, "sensor_reading", payload, db_path)
         print(f"[SIM-{ts}] {device_name} -> {payload}")
         time.sleep(interval_sec)
 
 
-def connect_mqtt(host, port):
+def connect_mqtt(host, port, allow_inject=False):
     global mqtt_client
     if mqtt is None:
         print("Error: paho-mqtt is not installed. Run 'pip install paho-mqtt'")
         return
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="gateway_pi")
+    if allow_inject:
+        client.message_callback_add(INJECT_TOPIC, on_inject)
+        # Subscribe in on_connect so it survives reconnects.
+        client.on_connect = lambda c, u, f, rc, p=None: c.subscribe(INJECT_TOPIC)
+        print(f"[Inject] Lab scenario injection ON (listening on {INJECT_TOPIC})")
     client.connect(host, port, 60)
     client.loop_start()  # background thread; reconnects automatically
     mqtt_client = client
@@ -220,11 +320,17 @@ def main():
     parser.add_argument("--mock", action="store_true", help="Run in mock/simulation mode without hardware")
     parser.add_argument("--mqtt-host", help="MQTT broker to publish to (e.g. localhost on the Pi). Omit to disable.")
     parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port")
+    parser.add_argument("--allow-inject", action="store_true",
+                        help="Let experiments/auto_record.py act out lab scenarios (lab use only)")
     args = parser.parse_args()
+    if args.allow_inject and not args.mqtt_host:
+        parser.error("--allow-inject needs --mqtt-host")
 
     init_db(args.db)
     if args.mqtt_host:
-        connect_mqtt(args.mqtt_host, args.mqtt_port)
+        connect_mqtt(args.mqtt_host, args.mqtt_port, args.allow_inject)
+    if args.allow_inject:
+        threading.Thread(target=door_actor, args=(args.db,), daemon=True).start()
 
     if args.mock:
         print("=== RUNNING IN MOCK / SIMULATION MODE ===")

@@ -219,15 +219,55 @@ python pi/mqtt_monitor.py --broker <pi-ip>
 
 The collector publishes every reading to `iot/<device>/<event>`. RFID scans are checked against `data/allowed_uids.txt`, and the result is shown on the room node's LCD.
 
+## Running the AI
+
+Three layers, all on the laptop:
+
+1. **Live anomaly detection.** An Isolation Forest learns what normal 10-second windows look like across sensor, network and door features.
+2. **Fault vs attack classifier.** A Random Forest is trained on labelled sessions you record on the real hardware. Each verdict comes with the features that drove it.
+3. **Incident reports.** For HIGH/CRITICAL detections, a local LLM (Ollama, `qwen2.5:7b`) writes a short report: what happened, fault or attack, and what to do. Nothing leaves the laptop.
+
+```bash
+# Record labelled sessions while mqtt_monitor.py is running (repeat each one 2-3 times)
+python experiments/record_session.py --list
+python experiments/record_session.py normal --minutes 10
+python experiments/record_session.py attack_brute_force --minutes 2
+python experiments/record_session.py attack_replay --minutes 2   # with: python experiments/attacks.py replay
+
+# Train, then score live windows (add --reports for Ollama incident reports)
+python pi/detector.py train
+python pi/detector.py live --reports
+
+# Evaluate: sensor-only vs network-only vs door-only vs cross-layer, cross-validated by session
+python experiments/evaluate_sessions.py
+
+# Dashboard
+python -m streamlit run pi/dashboard.py
+```
+
+**Hands-free recording.** Start the Pi collector with `--allow-inject` and `auto_record.py` acts out every scenario for you. It fakes the faults on the real readings at the gateway (no echo, floating gas pin, dead RFID reader, offline node), performs the card scans and IR passes, and runs the network attacks:
+
+```bash
+# on the Pi
+python pi/collector.py --mqtt-host localhost --allow-inject
+# on the laptop (with mqtt_monitor.py running)
+python experiments/auto_record.py --repeats 2
+```
+
+Injected faults imitate what the firmware sends rather than coming from a real unplugged wire, so say so if you report results, and record a few real sessions to compare. Leave `--allow-inject` off outside experiments, because anyone on the network could use it to fake readings.
+
+`experiments/attacks.py` (replay, flood, rogue) is for your own lab broker only. Ollama settings come from `OLLAMA_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `qwen2.5:7b`). If Ollama isn't running, detections are still saved, just without a report.
+
 ---
 
 ## Repository Modules
 
 ```text
 arduino/       Arduino firmware for the sensor nodes
-pi/            collector.py, mqtt_monitor.py, features.py,
-               detector.py, risk.py, dashboard.py
-experiments/   generate_test_data.py, evaluate.py
+pi/            collector.py, mqtt_monitor.py, features.py, detector.py,
+               risk.py, incident_report.py, dashboard.py
+experiments/   record_session.py, auto_record.py, attacks.py, evaluate_sessions.py
+               (older synthetic pipeline: generate_test_data.py, evaluate.py)
 data/          Local telemetry and experiment outputs
 ```
 

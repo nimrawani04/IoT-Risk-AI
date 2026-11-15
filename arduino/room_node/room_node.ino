@@ -24,8 +24,14 @@ const unsigned long MESSAGE_HOLD = 3000;
 unsigned long lastSend = 0;
 unsigned long messageUntil = 0;
 
-int lastIr = 0;
-unsigned int irCount = 0;  // beam breaks since the last send
+// IR obstacle modules flicker at the edge of their range, so a hand near the beam
+// produced 10+ "crossings" a second. Count a crossing only when the beam has been
+// steadily blocked for IR_STABLE_MS, and at most one per IR_LOCKOUT_MS (one person).
+const unsigned long IR_STABLE_MS = 50;
+const unsigned long IR_LOCKOUT_MS = 700;
+int irRaw = 0, irStable = 0;
+unsigned long irChangedAt = 0, lastCrossingAt = 0;
+unsigned int irCount = 0;  // crossings since the last send
 String rxLine;
 
 float readOnceCm() {
@@ -95,11 +101,15 @@ void loop() {
   handleSerial();
 
   // Most IR obstacle modules pull OUT low when something is in front of them.
-  int ir = digitalRead(IR_PIN) == LOW ? 1 : 0;
-  if (ir && !lastIr) irCount++;
-  lastIr = ir;
-
+  int raw = digitalRead(IR_PIN) == LOW ? 1 : 0;
   unsigned long now = millis();
+  if (raw != irRaw) { irRaw = raw; irChangedAt = now; }
+  if (raw != irStable && now - irChangedAt >= IR_STABLE_MS) {
+    irStable = raw;
+    if (irStable && now - lastCrossingAt >= IR_LOCKOUT_MS) { irCount++; lastCrossingAt = now; }
+  }
+  int ir = irStable;
+
   if (now - lastSend < SEND_INTERVAL) return;
   lastSend = now;
 

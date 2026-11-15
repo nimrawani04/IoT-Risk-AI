@@ -1,93 +1,122 @@
 """
 Evidence-Based Risk Assessment Engine.
-Combines machine-learning anomaly detections with deterministic physical
-and network-layer evidence to produce interpretable, actionable risk evaluations.
+Combines the AI models' output (anomaly score + fault/attack classifier) with
+deterministic physical, network and door evidence to produce interpretable,
+actionable risk evaluations.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+# Normal traffic is two boards at 1 msg/s each.
+FLOOD_MSGS_PER_SEC = 3.0
+LOW_RATE_MSGS_PER_SEC = 1.5
+BRUTE_FORCE_DENIALS = 3
+SLOW_BRUTE_FORCE_DENIALS = 4  # per minute
 
 
 class RiskAssessmentEngine:
     """
-    Evaluates telemetry features and anomaly predictions to classify the nature
-    of an IoT anomaly (Sensor Fault vs Security Attack vs Benign Noise).
+    Classifies a window as normal, a device fault or a security attack, with the
+    evidence behind it.
     """
 
     @staticmethod
     def assess(
         anomaly_detected: bool,
         anomaly_score: float = 0.0,
-        event_rate: float = 30.0,
+        event_rate: float = 60.0,
         is_sensor_stuck: bool = False,
         replay_count: int = 0,
         unauthorized_count: int = 0,
         publish_rate: float = 0.0,
-        interval_anomaly: bool = False
+        interval_anomaly: bool = False,
+        window_sec: float = 30.0,
+        access_denied: int = 0,
+        unauthorized_passes: int = 0,
+        reader_down: bool = False,
+        sensor_missing: bool = False,
+        unused_grants: int = 0,
+        access_denied_1m: int = 0,
+        ml_category: Optional[str] = None,
+        ml_confidence: float = 0.0,
     ) -> Dict[str, Any]:
         """
-        Assesses operational and security risk based on observable evidence.
-
-        Returns:
-            Dict containing category, risk_score (0-100), severity, and evidence list.
+        Returns a dict with category, risk_score (0-100), severity and the evidence list.
         """
         evidence: List[str] = []
         is_security_indicator = False
         is_fault_indicator = False
+        msg_rate = event_rate / window_sec
+        pub_rate = publish_rate / window_sec
 
-        # 1. Device / Sensor Fault Evidence
+        # 1. Device / sensor fault evidence
         if is_sensor_stuck:
-            evidence.append("Sensor reading stuck with zero variance (Hardware / ADC Fault)")
+            evidence.append("Sensor reading stuck with zero variance (hardware / ADC fault)")
+            is_fault_indicator = True
+        if sensor_missing:
+            evidence.append("Ultrasonic sensor returning no echo (disconnected or blocked)")
+            is_fault_indicator = True
+        if reader_down:
+            evidence.append("RFID reader not responding (loose wiring, power, or tampering)")
+            is_fault_indicator = True
+        if msg_rate < LOW_RATE_MSGS_PER_SEC:
+            evidence.append(f"Low sensor message rate ({msg_rate:.1f} msg/s) - a node may be offline")
             is_fault_indicator = True
 
-        if event_rate < 10.0:
-            evidence.append(f"Abnormally low serial event rate ({event_rate:.1f} msgs/window) - potential connection drop")
-            is_fault_indicator = True
-
-        # 2. Network & Security Attack Evidence
+        # 2. Network and door security evidence
         if replay_count > 0:
-            evidence.append(f"Observed {replay_count} identical replayed payload signatures (Replay Attack Scenario)")
+            evidence.append(f"{replay_count} replayed (identical) MQTT payloads")
             is_security_indicator = True
-
         if unauthorized_count > 0:
-            evidence.append(f"Observed {unauthorized_count} messages from unauthorized/unrecognized client IDs (Spoofing / Rogue Node)")
+            evidence.append(f"{unauthorized_count} messages from unknown client IDs (rogue node)")
             is_security_indicator = True
-
-        if publish_rate > 90.0 or event_rate > 90.0:
-            evidence.append(f"Excessive message rate detected (Flood / DoS pattern: {max(publish_rate, event_rate):.1f} msgs/window)")
+        if pub_rate > FLOOD_MSGS_PER_SEC or msg_rate > FLOOD_MSGS_PER_SEC * 2:
+            evidence.append(f"Excessive message rate ({max(pub_rate, msg_rate):.1f} msg/s) - flood / DoS pattern")
             is_security_indicator = True
-
+        if access_denied >= BRUTE_FORCE_DENIALS:
+            evidence.append(f"{access_denied} denied card scans - possible card brute-force")
+            is_security_indicator = True
+        elif access_denied_1m >= SLOW_BRUTE_FORCE_DENIALS:
+            evidence.append(f"{access_denied_1m} denied card scans in the last minute - slow card brute-force")
+            is_security_indicator = True
+        elif access_denied > 0:
+            evidence.append(f"{access_denied} denied card scan(s)")
+        if unauthorized_passes > 0:
+            evidence.append(f"{int(unauthorized_passes)} doorway crossing(s) without a valid card (tailgating / break-in)")
+            is_security_indicator = True
+        if unused_grants > 0:
+            evidence.append(f"{int(unused_grants)} valid card scan(s) but nobody walked through "
+                            "(changed their mind, or someone testing a card)")
         if interval_anomaly:
             evidence.append("Irregular inter-message timing jitter")
 
-        # 3. Decision Logic & Severity Scoring
-        if unauthorized_count > 0 and (replay_count > 0 or publish_rate > 90.0):
-            category = "CRITICAL_ATTACK"
-            severity = "CRITICAL"
-            base_score = 90
-        elif is_security_indicator:
-            category = "SUSPICIOUS_SECURITY_BEHAVIOUR"
-            severity = "HIGH"
-            base_score = 75
-        elif is_fault_indicator:
-            category = "DEVICE_HARDWARE_FAULT"
-            severity = "MEDIUM"
-            base_score = 50
-        elif anomaly_detected:
-            category = "UNEXPLAINED_ANOMALY"
-            severity = "LOW"
-            base_score = 35
-            evidence.append("Statistical deviation flagged by Isolation Forest without specific rule match")
-        else:
-            category = "NORMAL_OPERATION"
-            severity = "NONE"
-            base_score = 5
+        if ml_category in ("attack", "fault") and ml_confidence > 0:
+            evidence.append(f"AI classifier: {ml_category} ({ml_confidence:.0%} confidence)")
 
-        # Score adjustment using raw ML decision score (decision_function is negative for anomalies)
-        if anomaly_score < 0:
-            deviation_penalty = min(20, int(abs(anomaly_score) * 40))
-            risk_score = min(100, base_score + deviation_penalty)
+        # 3. Decision: rules first (explainable), then the AI where no rule matched.
+        if unauthorized_count > 0 and (replay_count > 0 or pub_rate > FLOOD_MSGS_PER_SEC):
+            category, severity, base_score = "CRITICAL_ATTACK", "CRITICAL", 90
+        elif is_security_indicator:
+            category, severity, base_score = "SUSPICIOUS_SECURITY_BEHAVIOUR", "HIGH", 75
+        elif is_fault_indicator:
+            category, severity, base_score = "DEVICE_HARDWARE_FAULT", "MEDIUM", 50
+        elif ml_category == "attack" and ml_confidence >= 0.6:
+            category, severity, base_score = "AI_SUSPECTED_ATTACK", "HIGH", 65
+        elif ml_category == "fault" and ml_confidence >= 0.6:
+            category, severity, base_score = "AI_SUSPECTED_FAULT", "MEDIUM", 45
+        elif anomaly_detected:
+            category, severity, base_score = "UNEXPLAINED_ANOMALY", "LOW", 35
+            evidence.append("Statistical deviation flagged by Isolation Forest without a specific rule match")
+        elif unused_grants > 0:
+            category, severity, base_score = "ACCESS_NOT_USED", "LOW", 20
         else:
-            risk_score = max(0, min(100, base_score))
+            category, severity, base_score = "NORMAL_OPERATION", "NONE", 5
+
+        # decision_function is negative for anomalies: the further below 0, the higher the score.
+        if anomaly_score < 0:
+            risk_score = min(100, base_score + min(20, int(abs(anomaly_score) * 40)))
+        else:
+            risk_score = base_score
 
         return {
             "category": category,
@@ -96,7 +125,7 @@ class RiskAssessmentEngine:
             "evidence": evidence,
             "anomaly_detected": bool(anomaly_detected),
             "is_security_indicator": is_security_indicator,
-            "is_fault_indicator": is_fault_indicator
+            "is_fault_indicator": is_fault_indicator,
         }
 
 
@@ -111,8 +140,8 @@ def assess_risk(anomaly_detected, replay_evidence=False, unauthorized_source=Fal
 
 
 if __name__ == "__main__":
-    # Test cases
-    print("Test 1 - Normal:", RiskAssessmentEngine.assess(False, anomaly_score=0.15))
-    print("Test 2 - Sensor Fault:", RiskAssessmentEngine.assess(True, anomaly_score=-0.12, is_sensor_stuck=True))
-    print("Test 3 - Replay Attack:", RiskAssessmentEngine.assess(True, anomaly_score=-0.25, replay_count=4))
-    print("Test 4 - Rogue Spoofing:", RiskAssessmentEngine.assess(True, anomaly_score=-0.35, unauthorized_count=3, publish_rate=120))
+    print("Normal:", RiskAssessmentEngine.assess(False, anomaly_score=0.15))
+    print("Sensor fault:", RiskAssessmentEngine.assess(True, anomaly_score=-0.12, is_sensor_stuck=True))
+    print("Replay:", RiskAssessmentEngine.assess(True, anomaly_score=-0.25, replay_count=4))
+    print("Brute force:", RiskAssessmentEngine.assess(True, window_sec=10, event_rate=20, access_denied=4))
+    print("Tailgating:", RiskAssessmentEngine.assess(True, window_sec=10, event_rate=20, unauthorized_passes=1))
