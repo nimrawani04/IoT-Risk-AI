@@ -17,9 +17,10 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
 SYSTEM_PROMPT = """You are the security analyst for a lab smart-room IoT system:
-an RFID door (RC522 reader + PIR motion), a room node (ultrasonic distance at the door,
-IR beam counting doorway crossings, MQ-135 air quality), two Arduinos sending data
-through a Raspberry Pi MQTT gateway to a monitoring laptop.
+a door node (RC522 card reader, IR beam counting doorway crossings, ultrasonic watching
+the corridor outside the door, LCD) and a room node (PIR motion, MQ-135 air quality):
+two Arduinos sending data through a Raspberry Pi MQTT gateway to a monitoring laptop.
+A card is granted only if someone is at the door; room motion confirms who entered.
 
 You receive one detection as JSON. Write a short incident report using ONLY those facts.
 Do not invent devices, people, times or numbers. If the evidence is weak, say so.
