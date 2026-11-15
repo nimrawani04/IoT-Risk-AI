@@ -162,38 +162,120 @@ In the reported experiment, when a critical risk score (\(R=9\)) was triggered, 
 
 | Component | Quantity | Purpose |
 |---|---:|---|
-| Raspberry Pi 5 (4 GB) or compatible host PC | 1 | Runs data collection, storage, feature extraction, ML, risk engine, and dashboard |
-| Arduino Uno R3 | 2 | Physical sensor data acquisition |
-| PIR motion sensor | 1 | Motion/event detection |
-| Push button | 1 | Manual event input |
-| MQ-4 gas sensor module | 1 | Relative gas-sensor readings for experiments |
-| HC-SR04 ultrasonic sensor | 1 | Distance/proximity measurements |
-| USB cables | 2 | Connect Arduino boards to the gateway |
-| Breadboard and jumper wires | As required | Circuit connections |
-| Heltec Wi-Fi/LoRa board | Optional | Wireless MQTT telemetry experiments |
+| Raspberry Pi 4 (4 GB) | 1 | Gateway: reads both Arduinos over USB, runs Mosquitto, publishes MQTT, decides RFID access |
+| Laptop | 1 | Subscribes over Wi-Fi: MQTT monitor, detector, risk engine and dashboard |
+| Arduino Uno R3 | 2 | Room node and door node |
+| HC-SR04 ultrasonic sensor | 1 | Proximity to the door |
+| IR obstacle sensor | 1 | Counts people passing the doorway |
+| MQ-135 air-quality sensor | 1 | Relative air-quality readings |
+| 16x2 LCD with I2C backpack | 1 | Shows access results and live readings |
+| PIR motion sensor | 1 | Motion inside the room |
+| RC522 RFID reader + cards | 1 | Door access |
+| USB cables | 2 | Connect the Arduinos to the Pi |
 
-**Safety note:** The MQ-4 module is uncalibrated in this setup and is used for relative anomaly experiments only. It is not a certified gas detector and must not be relied upon for life-safety monitoring.
+**Safety note:** The MQ-135 module is uncalibrated and is used for relative anomaly experiments only. It is not a certified gas detector and must not be relied upon for life-safety monitoring.
 
 ## Hardware Connections
 
-### Arduino Uno 1 — Event Node
+### Arduino Uno 2 — Door node (`arduino/door_node`)
 
 | Component | Arduino pin |
 |---|---|
-| PIR OUT | D8 |
-| Push button | D2 and GND (using `INPUT_PULLUP`) |
-| PIR VCC / GND | As specified by the module / GND |
+| RC522 SDA (SS) / SCK / MOSI / MISO / RST | D10 / D13 / D11 / D12 / D9 |
+| RC522 VCC | **3.3V only** |
+| IR sensor OUT (across the doorway) | D7 (VCC 5V) |
+| HC-SR04 Trigger / Echo (outside the door, facing the corridor) | D3 / D4 (VCC 5V) |
+| LCD I2C SDA / SCL (next to the reader) | A4 / A5 (VCC 5V) |
 
-### Arduino Uno 2 — Environmental Node
+Libraries: `MFRC522`, `LiquidCrystal_I2C`. The LCD address is set to `0x27`; change it to `0x3F` if the screen stays blank. Use a breadboard rail to share 5V and GND between the IR, ultrasonic and LCD.
+
+The ultrasonic sensor tells entering from leaving: someone close to it just before the IR beam breaks is coming in, someone close to it just after is going out.
+
+### Arduino Uno 1 — Room node (`arduino/room_node`)
 
 | Component | Arduino pin |
 |---|---|
-| MQ-4 Analog Output | A0 |
-| HC-SR04 Trigger | D3 |
-| HC-SR04 Echo | D4 |
-| Sensor power and ground | Follow module specifications; connect grounds appropriately |
+| PIR OUT (inside the room) | D8 (VCC 5V) |
+| MQ-135 AO | A0 (DO not connected, VCC 5V) |
 
-**Electrical note:** HC-SR04 Echo is typically a 5V signal. Use a suitable level shifter or voltage divider when connecting it to a 3.3V-only input. Check the specifications of each module before wiring.
+The PIR confirms that someone who came through the door is really inside. It needs 30–60 s to settle after power-on.
+
+**Electrical notes:** Never connect sensors directly to the Pi's GPIO pins; they are 3.3V and the HC-SR04 and IR modules output 5V. Power the Pi with a 3A supply, because it also powers both Arduinos and the MQ-135 heater.
+
+## Running with the Pi gateway
+
+On the Pi:
+
+```bash
+sudo apt install mosquitto
+sudo cp pi/mosquitto.conf /etc/mosquitto/conf.d/iot.conf && sudo systemctl restart mosquitto
+cp data/allowed_uids.example.txt data/allowed_uids.txt   # then add your card UIDs
+python pi/collector.py --mqtt-host localhost
+```
+
+On the laptop (replace `<pi-ip>` with the Pi's address):
+
+```bash
+python pi/mqtt_monitor.py --broker <pi-ip>
+```
+
+The collector publishes every reading to `iot/<device>/<event>`.
+
+### How the door and room work
+
+**Access decision (on the Pi).** A card is granted only if its UID is in `data/allowed_uids.txt` (one card per line, optionally followed by the holder's name, e.g. `613E7017 Milad`) **and** the corridor ultrasonic saw someone within 1.2 m in the last 5 s. The LCD shows `Access granted / <name>`, `Access denied / <uid>`, `Access denied / No one detected` or `Access denied / Door sensor down` (fails closed). Denials are stored with their reason.
+
+**Entering vs leaving.** Each IR crossing is classified from the corridor ultrasonic: someone near it in the 4 s *before* the crossing = entering; nobody before but someone near in the 4 s *after* = leaving. Unclear cases count as entering. Only entries need a card, so people leaving no longer look like break-ins.
+
+**Room cross-checks (PIR in the room).**
+
+| Check | Rule | Catches |
+|---|---|---|
+| Entry not confirmed | An entry with fewer than 3 s of room motion in the next 30 s | Spoofed door messages (e.g. `attacks.py spoof_entry`), a dead room PIR |
+| Motion in an empty room | 3+ s of motion in a 10 s window while occupancy (entries minus exits) is 0 | Someone who got in another way, or hid inside |
+
+The room counts as empty again after 3 minutes with no crossings and only PIR noise (under 5% of seconds), which also corrects a missed exit.
+
+**Known limits.** Someone waiting outside while another person leaves makes that exit look like an entry. One IR sensor can't separate two people in the same second. Someone sitting completely still for 3+ minutes is forgotten, so their next movement can raise an empty-room alert.
+
+## Running the AI
+
+Three layers, all on the laptop:
+
+1. **Live anomaly detection.** An Isolation Forest learns what normal 10-second windows look like across sensor, network and door features.
+2. **Fault vs attack classifier.** A Random Forest is trained on labelled sessions you record on the real hardware. Each verdict comes with the features that drove it.
+3. **Incident reports.** For HIGH/CRITICAL detections, a local LLM (Ollama, `qwen2.5:7b`) writes a short report: what happened, fault or attack, and what to do. Nothing leaves the laptop.
+
+```bash
+# Record labelled sessions while mqtt_monitor.py is running (repeat each one 2-3 times)
+python experiments/record_session.py --list
+python experiments/record_session.py normal --minutes 10
+python experiments/record_session.py attack_brute_force --minutes 2
+python experiments/record_session.py attack_replay --minutes 2   # with: python experiments/attacks.py replay
+
+# Train, then score live windows (add --reports for Ollama incident reports)
+python pi/detector.py train
+python pi/detector.py live --reports
+
+# Evaluate: sensor-only vs network-only vs door-only vs cross-layer, cross-validated by session
+python experiments/evaluate_sessions.py
+
+# Dashboard
+python -m streamlit run pi/dashboard.py
+```
+
+**Hands-free recording.** Start the Pi collector with `--allow-inject` and `auto_record.py` acts out every scenario for you. It fakes the faults on the real readings at the gateway (no echo, floating gas pin, dead RFID reader, offline node), acts out people walking up, scanning, entering, moving around inside and leaving (plus tailgaters, break-ins and an intruder already inside), and runs the network attacks, including a spoofed entry:
+
+```bash
+# on the Pi
+python pi/collector.py --mqtt-host localhost --allow-inject
+# on the laptop (with mqtt_monitor.py running)
+python experiments/auto_record.py --repeats 2
+```
+
+Injected faults imitate what the firmware sends rather than coming from a real unplugged wire, so say so if you report results, and record a few real sessions to compare. Leave `--allow-inject` off outside experiments, because anyone on the network could use it to fake readings.
+
+`experiments/attacks.py` (replay, flood, rogue) is for your own lab broker only. Ollama settings come from `OLLAMA_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `qwen2.5:7b`). If Ollama isn't running, detections are still saved, just without a report.
 
 ---
 
@@ -201,9 +283,10 @@ In the reported experiment, when a critical risk score (\(R=9\)) was triggered, 
 
 ```text
 arduino/       Arduino firmware for the sensor nodes
-pi/            collector.py, mqtt_monitor.py, features.py,
-               detector.py, risk.py, dashboard.py
-experiments/   generate_test_data.py, evaluate.py
+pi/            collector.py, mqtt_monitor.py, features.py, detector.py,
+               risk.py, incident_report.py, dashboard.py
+experiments/   record_session.py, auto_record.py, attacks.py, evaluate_sessions.py
+               (older synthetic pipeline: generate_test_data.py, evaluate.py)
 data/          Local telemetry and experiment outputs
 ```
 

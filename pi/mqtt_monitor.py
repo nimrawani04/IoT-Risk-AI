@@ -14,6 +14,8 @@ import threading
 from datetime import datetime, timezone
 from collections import defaultdict, deque
 
+from collector import init_db as init_sensor_db, store_reading
+
 try:
     import paho.mqtt.client as mqtt
 except ImportError:
@@ -133,12 +135,19 @@ def on_message(client, userdata, msg):
         client_id = None
         try:
             data = json.loads(payload_str)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
             client_id = data.get("device") or data.get("client_id")
-        except Exception:
-            pass
 
         analyzer = userdata["analyzer"]
         res = analyzer.analyze_and_log(msg.topic, client_id, payload_str)
+
+        # Gateway topics are iot/<device>/<event>: keep a local copy of the sensor data
+        # so the laptop's detector and dashboard work without access to the Pi's database.
+        parts = msg.topic.split("/")
+        if isinstance(data, dict) and len(parts) == 3 and parts[0] == "iot":
+            store_reading(parts[1], parts[2], data, analyzer.db_path)
         print(f"[MQTT-NET] {res['received_at']} Topic={msg.topic} Client={client_id} Replay={res['is_replay']} Rogue={res['is_unauthorized']}")
     except Exception as e:
         print(f"[MQTT] Error processing message: {e}")
@@ -150,8 +159,9 @@ def run_subscriber(broker=DEFAULT_BROKER, port=DEFAULT_PORT, topic=DEFAULT_TOPIC
         return
 
     init_db(db_path)
+    init_sensor_db(db_path)
     analyzer = NetworkAnalyzer(db_path)
-    client = mqtt.Client(userdata={"topic": topic, "analyzer": analyzer})
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, userdata={"topic": topic, "analyzer": analyzer})
     client.on_connect = on_connect
     client.on_message = on_message
 
