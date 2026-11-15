@@ -195,26 +195,26 @@ def live_view():
             if "mq135_raw" in df_sensor.columns:
                 gas_df = df_sensor.dropna(subset=["mq135_raw"]).copy()
                 if not gas_df.empty:
-                    fig_gas = px.line(gas_df.head(200), x="received_at", y="mq135_raw", title="Arduino 1 — MQ-135 Gas Sensor ADC Output", template="plotly_dark")
+                    fig_gas = px.line(gas_df.head(200), x="received_at", y="mq135_raw", title="Room node — MQ-135 Gas Sensor ADC Output", template="plotly_dark")
                     colA.plotly_chart(fig_gas, use_container_width=True)
 
             if "distance_cm" in df_sensor.columns:
                 dist_df = df_sensor[df_sensor["distance_cm"] >= 0].head(200).copy()
                 if not dist_df.empty:
-                    fig_dist = px.line(dist_df, x="received_at", y="distance_cm", title="Arduino 1 — Ultrasonic Distance (cm)", template="plotly_dark", color_discrete_sequence=["#06b6d4"])
+                    fig_dist = px.line(dist_df, x="received_at", y="distance_cm", title="Door node — Corridor Ultrasonic Distance (cm)", template="plotly_dark", color_discrete_sequence=["#06b6d4"])
                     colB.plotly_chart(fig_dist, use_container_width=True)
 
             colC, colD = st.columns(2)
             if "motion" in df_sensor.columns:
                 mot_df = df_sensor.dropna(subset=["motion"]).head(200).copy()
                 if not mot_df.empty:
-                    fig_mot = px.bar(mot_df, x="received_at", y="motion", title="Arduino 2 — PIR Motion Events", template="plotly_dark", color_discrete_sequence=["#10b981"])
+                    fig_mot = px.bar(mot_df, x="received_at", y="motion", title="Room node — PIR Motion Events", template="plotly_dark", color_discrete_sequence=["#10b981"])
                     colC.plotly_chart(fig_mot, use_container_width=True)
 
             if "ir_count" in df_sensor.columns:
                 btn_df = df_sensor.dropna(subset=["ir_count"]).head(200).copy()
                 if not btn_df.empty:
-                    fig_btn = px.bar(btn_df, x="received_at", y="ir_count", title="Arduino 1 — IR Beam Breaks", template="plotly_dark", color_discrete_sequence=["#f59e0b"])
+                    fig_btn = px.bar(btn_df, x="received_at", y="ir_count", title="Door node — IR Doorway Crossings", template="plotly_dark", color_discrete_sequence=["#f59e0b"])
                     colD.plotly_chart(fig_btn, use_container_width=True)
 
     # VIEW 3: Network Telemetry

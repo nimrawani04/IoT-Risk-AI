@@ -47,7 +47,8 @@ NETWORK_FEATURES = [
     "net_interval_mean_ms", "net_interval_std_ms", "net_replay_count_1m",
 ]
 DOOR_FEATURES = ["access_granted", "access_denied", "ir_passes", "unauthorized_passes",
-                 "unused_grants", "access_denied_1m", "unauthorized_passes_1m"]
+                 "unused_grants", "access_denied_1m", "unauthorized_passes_1m",
+                 "entries", "exits", "entries_unconfirmed_1m", "motion_while_empty", "motion_while_empty_1m"]
 ALL_FEATURES = SENSOR_FEATURES + NETWORK_FEATURES + DOOR_FEATURES
 
 FEATURE_LABELS = {
@@ -56,7 +57,10 @@ FEATURE_LABELS = {
     "mq135_raw_delta": "gas change (vs last 10 min)", "distance_cm_delta": "door distance change (vs last 10 min)",
     "unused_grants": "card scans with nobody entering", "access_denied_1m": "denied scans (last minute)",
     "unauthorized_passes_1m": "crossings without a card (last minute)",
-    "net_replay_count_1m": "replayed messages (last minute)", "mq135_raw_std": "gas variation",
+    "net_replay_count_1m": "replayed messages (last minute)",
+    "entries": "people entering", "exits": "people leaving",
+    "entries_unconfirmed_1m": "entries with no room motion after (last minute)",
+    "motion_while_empty": "room motion while empty", "motion_while_empty_1m": "room motion while empty (last minute)", "mq135_raw_std": "gas variation",
     "distance_cm_mean": "door distance", "distance_cm_std": "distance variation",
     "distance_cm_missing": "missing ultrasonic echoes", "motion_mean": "motion",
     "rfid_ok_mean": "RFID reader health", "net_publish_rate": "MQTT messages",
@@ -101,6 +105,8 @@ DOOR_ATTACK_EVIDENCE = {
     "attack_slow_brute_force": "access_denied_1m",
     "attack_tailgating": "unauthorized_passes_1m",
     "attack_break_in": "unauthorized_passes_1m",
+    "attack_spoofed_entry": "entries_unconfirmed_1m",
+    "attack_intruder_inside": "motion_while_empty_1m",
 }
 
 
@@ -232,6 +238,8 @@ def score(feats, bundle):
             sensor_missing=f.get("distance_cm_missing", 0) >= 0.8,
             unused_grants=int(f.get("unused_grants", 0)),
             access_denied_1m=int(f.get("access_denied_1m", 0)),
+            entries_unconfirmed=int(f.get("entries_unconfirmed", 0)),
+            motion_while_empty=int(f.get("motion_while_empty", 0)),
             ml_category=ml_category,
             ml_confidence=float(confidences[i]),
         )
@@ -314,7 +322,8 @@ def live(db_path=DB_PATH, model_path=MODEL_PATH, interval=2.0, reports=False):
     bundle = load_bundle(model_path)
     init_detections(db_path)
     window = pd.Timedelta(WINDOW)
-    grace = pd.Timedelta(seconds=2)  # let late MQTT messages land before a window is scored
+    # Wait for late MQTT messages, and for the readings after a crossing that tell entering from leaving.
+    grace = pd.Timedelta(seconds=6)
     last_scored = pd.Timestamp.now(tz="UTC") - window * 3
     last_report = {}
     print(f"[Live] Scoring {WINDOW} windows every {interval}s. Reports: {'on' if reports else 'off'}. Ctrl+C to stop.")

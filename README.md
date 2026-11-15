@@ -177,26 +177,28 @@ In the reported experiment, when a critical risk score (\(R=9\)) was triggered, 
 
 ## Hardware Connections
 
-### Arduino Uno 1 — Room node (`arduino/room_node`)
-
-| Component | Arduino pin |
-|---|---|
-| HC-SR04 Trigger / Echo | D3 / D4 (VCC 5V) |
-| IR sensor OUT | D7 (VCC 5V) |
-| LCD I2C SDA / SCL | A4 / A5 (VCC 5V) |
-| MQ-135 AO | A0 (DO not connected, VCC 5V) |
-
-Library: `LiquidCrystal_I2C`. The LCD address is set to `0x27`; change it to `0x3F` if the screen stays blank.
-
 ### Arduino Uno 2 — Door node (`arduino/door_node`)
 
 | Component | Arduino pin |
 |---|---|
-| PIR OUT | D8 (VCC 5V) |
 | RC522 SDA (SS) / SCK / MOSI / MISO / RST | D10 / D13 / D11 / D12 / D9 |
 | RC522 VCC | **3.3V only** |
+| IR sensor OUT (across the doorway) | D7 (VCC 5V) |
+| HC-SR04 Trigger / Echo (outside the door, facing the corridor) | D3 / D4 (VCC 5V) |
+| LCD I2C SDA / SCL (next to the reader) | A4 / A5 (VCC 5V) |
 
-Library: `MFRC522`.
+Libraries: `MFRC522`, `LiquidCrystal_I2C`. The LCD address is set to `0x27`; change it to `0x3F` if the screen stays blank. Use a breadboard rail to share 5V and GND between the IR, ultrasonic and LCD.
+
+The ultrasonic sensor tells entering from leaving: someone close to it just before the IR beam breaks is coming in, someone close to it just after is going out.
+
+### Arduino Uno 1 — Room node (`arduino/room_node`)
+
+| Component | Arduino pin |
+|---|---|
+| PIR OUT (inside the room) | D8 (VCC 5V) |
+| MQ-135 AO | A0 (DO not connected, VCC 5V) |
+
+The PIR confirms that someone who came through the door is really inside. It needs 30–60 s to settle after power-on.
 
 **Electrical notes:** Never connect sensors directly to the Pi's GPIO pins; they are 3.3V and the HC-SR04 and IR modules output 5V. Power the Pi with a 3A supply, because it also powers both Arduinos and the MQ-135 heater.
 
@@ -217,7 +219,24 @@ On the laptop (replace `<pi-ip>` with the Pi's address):
 python pi/mqtt_monitor.py --broker <pi-ip>
 ```
 
-The collector publishes every reading to `iot/<device>/<event>`. RFID scans are checked against `data/allowed_uids.txt`, and the result is shown on the room node's LCD.
+The collector publishes every reading to `iot/<device>/<event>`.
+
+### How the door and room work
+
+**Access decision (on the Pi).** A card is granted only if its UID is in `data/allowed_uids.txt` (one card per line, optionally followed by the holder's name, e.g. `613E7017 Milad`) **and** the corridor ultrasonic saw someone within 1.2 m in the last 5 s. The LCD shows `Access granted / <name>`, `Access denied / <uid>`, `Access denied / No one detected` or `Access denied / Door sensor down` (fails closed). Denials are stored with their reason.
+
+**Entering vs leaving.** Each IR crossing is classified from the corridor ultrasonic: someone near it in the 4 s *before* the crossing = entering; nobody before but someone near in the 4 s *after* = leaving. Unclear cases count as entering. Only entries need a card, so people leaving no longer look like break-ins.
+
+**Room cross-checks (PIR in the room).**
+
+| Check | Rule | Catches |
+|---|---|---|
+| Entry not confirmed | An entry with fewer than 3 s of room motion in the next 30 s | Spoofed door messages (e.g. `attacks.py spoof_entry`), a dead room PIR |
+| Motion in an empty room | 3+ s of motion in a 10 s window while occupancy (entries minus exits) is 0 | Someone who got in another way, or hid inside |
+
+The room counts as empty again after 3 minutes with no crossings and only PIR noise (under 5% of seconds), which also corrects a missed exit.
+
+**Known limits.** Someone waiting outside while another person leaves makes that exit look like an entry. One IR sensor can't separate two people in the same second. Someone sitting completely still for 3+ minutes is forgotten, so their next movement can raise an empty-room alert.
 
 ## Running the AI
 
@@ -245,7 +264,7 @@ python experiments/evaluate_sessions.py
 python -m streamlit run pi/dashboard.py
 ```
 
-**Hands-free recording.** Start the Pi collector with `--allow-inject` and `auto_record.py` acts out every scenario for you. It fakes the faults on the real readings at the gateway (no echo, floating gas pin, dead RFID reader, offline node), performs the card scans and IR passes, and runs the network attacks:
+**Hands-free recording.** Start the Pi collector with `--allow-inject` and `auto_record.py` acts out every scenario for you. It fakes the faults on the real readings at the gateway (no echo, floating gas pin, dead RFID reader, offline node), acts out people walking up, scanning, entering, moving around inside and leaving (plus tailgaters, break-ins and an intruder already inside), and runs the network attacks, including a spoofed entry:
 
 ```bash
 # on the Pi

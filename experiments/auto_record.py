@@ -21,8 +21,11 @@ import threading
 import attacks
 from record_session import record, DB_PATH, SCENARIOS
 
-NETWORK_ATTACKS = {"attack_replay": attacks.replay, "attack_flood": attacks.flood, "attack_rogue": attacks.rogue}
+NETWORK_ATTACKS = {"attack_replay": attacks.replay, "attack_flood": attacks.flood, "attack_rogue": attacks.rogue,
+                   "attack_spoofed_entry": attacks.spoof_entry}
 SETTLE_SEC = 20  # unrecorded gap so one scenario doesn't bleed into the next window
+# The room must have been quiet for 3+ minutes to count as empty (features.EMPTY_RESET_SEC).
+NEEDS_EMPTY_ROOM = {"attack_intruder_inside": 190}
 
 
 def telemetry_count(db_path):
@@ -78,6 +81,9 @@ def main():
         for rep in range(args.repeats):
             for scenario in plan:
                 print(f"\n=== Round {rep + 1}/{args.repeats}: {scenario} ===")
+                if scenario in NEEDS_EMPTY_ROOM:
+                    print(f"Waiting {NEEDS_EMPTY_ROOM[scenario]}s so the room counts as empty...")
+                    time.sleep(NEEDS_EMPTY_ROOM[scenario])
                 run(scenario, args.normal_minutes if scenario == "normal" else args.minutes,
                     args.broker, args.port, args.db, control)
                 time.sleep(SETTLE_SEC)

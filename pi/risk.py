@@ -12,6 +12,7 @@ FLOOD_MSGS_PER_SEC = 3.0
 LOW_RATE_MSGS_PER_SEC = 1.5
 BRUTE_FORCE_DENIALS = 3
 SLOW_BRUTE_FORCE_DENIALS = 4  # per minute
+EMPTY_ROOM_MOTION = 3  # seconds of motion in a 10 s window while nobody should be inside
 
 
 class RiskAssessmentEngine:
@@ -37,6 +38,8 @@ class RiskAssessmentEngine:
         sensor_missing: bool = False,
         unused_grants: int = 0,
         access_denied_1m: int = 0,
+        entries_unconfirmed: int = 0,
+        motion_while_empty: int = 0,
         ml_category: Optional[str] = None,
         ml_confidence: float = 0.0,
     ) -> Dict[str, Any]:
@@ -83,6 +86,14 @@ class RiskAssessmentEngine:
             evidence.append(f"{access_denied} denied card scan(s)")
         if unauthorized_passes > 0:
             evidence.append(f"{int(unauthorized_passes)} doorway crossing(s) without a valid card (tailgating / break-in)")
+            is_security_indicator = True
+        if entries_unconfirmed > 0:
+            evidence.append(f"{int(entries_unconfirmed)} entr(y/ies) through the door with no movement in the room "
+                            "within 30 s - spoofed door data, or the room PIR has failed")
+            is_security_indicator = True
+        if motion_while_empty >= EMPTY_ROOM_MOTION:
+            evidence.append("Movement in the room while nobody entered through the door - "
+                            "possible intruder (window, other entrance) or someone hiding inside")
             is_security_indicator = True
         if unused_grants > 0:
             evidence.append(f"{int(unused_grants)} valid card scan(s) but nobody walked through "
@@ -145,3 +156,6 @@ if __name__ == "__main__":
     print("Replay:", RiskAssessmentEngine.assess(True, anomaly_score=-0.25, replay_count=4))
     print("Brute force:", RiskAssessmentEngine.assess(True, window_sec=10, event_rate=20, access_denied=4))
     print("Tailgating:", RiskAssessmentEngine.assess(True, window_sec=10, event_rate=20, unauthorized_passes=1))
+    print("Spoofed entry:", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, entries_unconfirmed=1)["category"])
+    print("Empty-room motion:", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, motion_while_empty=5)["category"])
+    print("PIR noise (1 s):", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, motion_while_empty=1)["category"])

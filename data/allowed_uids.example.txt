@@ -1,2 +1,4 @@
 # Allowed RFID card UIDs, one per line (hex, as printed by the door node).
 # Scan a card, copy its uid from the collector output, and paste it here.
+# Optionally add the holder's name after a space; the LCD shows it on access:
+#   0A1B2C3D Alex
