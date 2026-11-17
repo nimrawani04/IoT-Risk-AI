@@ -15,7 +15,7 @@ DB_PATH = "data/telemetry.db"
 SENSOR_COLS = ["mq135_raw", "distance_cm", "motion", "ir_count", "rfid_ok"]
 NET_COLS = ["net_publish_rate", "net_replay_count", "net_unauthorized_count",
             "net_interval_mean_ms", "net_interval_std_ms"]
-DOOR_COLS = ["access_granted", "access_denied", "ir_passes", "unauthorized_passes",
+DOOR_COLS = ["access_granted", "access_denied", "card_no_person", "ir_passes", "unauthorized_passes",
              "entries", "exits", "entries_unconfirmed", "motion_while_empty"]
 
 # Door / room logic. PRESENCE_CM must match the collector's access check.
@@ -77,7 +77,7 @@ def load_access_events(db_path=DB_PATH, since=None):
     conn = sqlite3.connect(db_path)
     try:
         df = pd.read_sql_query(f"""
-            SELECT received_at, event FROM telemetry
+            SELECT received_at, event, json_extract(payload, '$.reason') AS reason FROM telemetry
             {where} event IN ('access_granted', 'access_denied') ORDER BY id
         """, conn, params=args)
     except Exception:
@@ -162,6 +162,9 @@ def extract_door_features(df_access, window="30s"):
     feats = pd.DataFrame(index=df.resample(window).size().index)
     feats["access_granted"] = (df["event"] == "access_granted").resample(window).sum()
     feats["access_denied"] = (df["event"] == "access_denied").resample(window).sum()
+    # A valid card scanned while the corridor ultrasonic saw nobody: cloned/relayed card, or someone dodging the sensor.
+    reason = df["reason"] if "reason" in df else pd.Series("", index=df.index)
+    feats["card_no_person"] = (reason == "no_person_detected").resample(window).sum()
     feats.index.name = "received_at"
     return feats.reset_index()
 
@@ -277,6 +280,9 @@ def extract_cross_layer_features(df_sensor, df_network, window="30s", df_access=
     for col in ("access_denied", "unauthorized_passes", "net_replay_count",
                 "entries_unconfirmed", "motion_while_empty"):
         combined[f"{col}_1m"] = t[col].rolling("60s").sum().to_numpy()
+    # An empty corridor gives short no-echo gaps; a dead ultrasonic gives no echo for 30 s straight.
+    if "distance_cm_missing" in t:
+        combined["distance_cm_missing_30s"] = t["distance_cm_missing"].rolling("30s").min().to_numpy()
     return combined
 
 

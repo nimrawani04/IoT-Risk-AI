@@ -38,7 +38,9 @@ DOOR_DEVICE = "arduino_2"
 # last few seconds; otherwise the "scan" came from a cloned/relayed card or a faked message.
 PRESENCE_CM = 120
 PRESENCE_SEC = 5
+ECHO_DEAD_SEC = 30  # no echo for this long = ultrasonic down (an open corridor gives brief no-echo gaps)
 door_distances = []  # (time, distance_cm) of the door node's recent readings
+last_echo_at = 0.0
 
 # Filled in at runtime: open serial port per device (to send LCD messages back),
 # and the MQTT client (None when publishing is off).
@@ -123,18 +125,24 @@ def show_on_lcd(line1, line2=""):
 
 
 def note_door_distance(distance):
+    global last_echo_at
     now = time.time()
+    if distance is not None and distance >= 0:
+        last_echo_at = now
     door_distances.append((now, distance))
     while door_distances and now - door_distances[0][0] > PRESENCE_SEC:
         door_distances.pop(0)
 
 
 def person_at_door():
-    """True / False, or None when the ultrasonic gave no usable reading (fault or unplugged)."""
-    recent = [d for t, d in door_distances if time.time() - t <= PRESENCE_SEC and d is not None and d >= 0]
-    if not recent:
+    """True / False, or None when the ultrasonic has given no echo at all for ECHO_DEAD_SEC (fault or unplugged).
+
+    A few seconds of no echo is just an empty corridor (nothing within range), not a fault.
+    """
+    if time.time() - last_echo_at > ECHO_DEAD_SEC:
         return None
-    return min(recent) <= PRESENCE_CM
+    recent = [d for t, d in door_distances if time.time() - t <= PRESENCE_SEC and d is not None and d >= 0]
+    return bool(recent) and min(recent) <= PRESENCE_CM
 
 
 def handle_rfid_scan(data, db_path=DB_PATH):

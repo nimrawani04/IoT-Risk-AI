@@ -40,6 +40,7 @@ class RiskAssessmentEngine:
         access_denied_1m: int = 0,
         entries_unconfirmed: int = 0,
         motion_while_empty: int = 0,
+        card_no_person: int = 0,
         ml_category: Optional[str] = None,
         ml_confidence: float = 0.0,
     ) -> Dict[str, Any]:
@@ -84,6 +85,10 @@ class RiskAssessmentEngine:
             is_security_indicator = True
         elif access_denied > 0:
             evidence.append(f"{access_denied} denied card scan(s)")
+        if card_no_person > 0:
+            evidence.append(f"{int(card_no_person)} valid card scan(s) with nobody at the door - "
+                            "cloned/relayed card, or someone avoiding the presence sensor")
+            is_security_indicator = True
         if unauthorized_passes > 0:
             evidence.append(f"{int(unauthorized_passes)} doorway crossing(s) without a valid card (tailgating / break-in)")
             is_security_indicator = True
@@ -158,4 +163,5 @@ if __name__ == "__main__":
     print("Tailgating:", RiskAssessmentEngine.assess(True, window_sec=10, event_rate=20, unauthorized_passes=1))
     print("Spoofed entry:", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, entries_unconfirmed=1)["category"])
     print("Empty-room motion:", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, motion_while_empty=5)["category"])
+    print("Card, nobody at door:", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, card_no_person=1)["category"])
     print("PIR noise (1 s):", RiskAssessmentEngine.assess(False, window_sec=10, event_rate=20, motion_while_empty=1)["category"])
